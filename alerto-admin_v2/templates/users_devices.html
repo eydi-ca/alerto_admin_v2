@@ -1,0 +1,517 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="registry-page">
+    <div class="page-header">
+        <div>
+            <p class="eyebrow">ALERTO REGISTRY</p>
+            <h1>Users and Devices Management</h1>
+            <p class="page-subtitle">
+                Manage registered residents, account status, password recovery, and device records.
+            </p>
+        </div>
+    </div>
+
+    <section class="registry-panel">
+        <div class="panel-header">
+            <div>
+                <h2>Registered Users</h2>
+                <p>{{ users|length }} user account(s) found</p>
+            </div>
+
+            <a class="panel-link" href="/approvals">View pending approvals</a>
+        </div>
+
+        {% if users %}
+        <div class="table-wrapper">
+            <table class="registry-table">
+                <thead>
+                    <tr>
+                        <th>User ID</th>
+                        <th>Full Name</th>
+                        <th>Phone Number</th>
+                        <th>Address</th>
+                        <th>Status</th>
+                        <th>Created At</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    {% for user in users %}
+                    <tr>
+                        <td>
+                            <span class="user-code">
+                                {{ user.user_code or user.user_id or "—" }}
+                            </span>
+                        </td>
+                        <td>{{ user.full_name or "—" }}</td>
+                        <td>{{ user.phone_number or "Not provided" }}</td>
+                        <td>{{ user.address or "—" }}</td>
+                        <td>
+                            <span class="status-pill {{ user.approval_status or user.status or 'pending' }}">
+                                {{ user.approval_status or user.status or "pending" }}
+                            </span>
+                        </td>
+                        <td>{{ user.created_at or "—" }}</td>
+                        <td class="actions">
+                            <button
+                                class="btn-small"
+                                data-profile-id="{{ user.id }}"
+                                data-full-name="{{ user.full_name or '' | e }}"
+                                data-phone-number="{{ user.phone_number or '' | e }}"
+                                data-address="{{ user.address or '' | e }}"
+                                onclick="openEditUserModalFromButton(this)">
+                                Edit
+                            </button>
+
+                            <button
+                                class="btn-small danger"
+                                data-profile-id="{{ user.id }}"
+                                data-user-code="{{ user.user_code or user.user_id or '' | e }}"
+                                onclick="openResetPasswordModalFromButton(this)">
+                                Reset PIN
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <h3>No registered users yet</h3>
+            <p>Resident registrations from the mobile app will appear here.</p>
+        </div>
+        {% endif %}
+    </section>
+
+    <section class="registry-panel">
+        <div class="panel-header">
+            <div>
+                <h2>Registered Devices</h2>
+                <p>{{ devices|length }} device record(s) found</p>
+            </div>
+        </div>
+
+        {% if devices %}
+        <div class="table-wrapper">
+            <table class="registry-table">
+                <thead>
+                    <tr>
+                        <th>Device ID</th>
+                        <th>Assigned User ID</th>
+                        <th>Status</th>
+                        <th>Last Seen</th>
+                        <th>Approved At</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    {% for device in devices %}
+                    <tr>
+                        <td>
+                            <span class="user-code">
+                                {{ device.device_id }}
+                            </span>
+                        </td>
+                        <td>{{ device.user_id or device.linked_profile_id or "—" }}</td>
+                        <td>
+                            <span class="status-pill {{ device.approval_status or device.status or 'pending' }}">
+                                {{ device.approval_status or device.status or "pending" }}
+                            </span>
+                        </td>
+                        <td>{{ device.last_seen_at or "—" }}</td>
+                        <td>{{ device.approved_at or "—" }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <h3>No registered devices shown yet</h3>
+            <p>T-Beam station/device records will be connected here after the device registry module is completed.</p>
+        </div>
+        {% endif %}
+    </section>
+</div>
+
+<div id="editUserModal" class="modal-backdrop" style="display: none;">
+    <div class="modal-card">
+        <h3>Edit User Account</h3>
+
+        <input type="hidden" id="editProfileId">
+
+        <label>Full Name</label>
+        <input id="editFullName" type="text">
+
+        <label>Phone Number</label>
+        <input id="editPhoneNumber" type="text">
+
+        <label>Address</label>
+        <textarea id="editAddress" rows="3"></textarea>
+
+        <div class="modal-actions">
+            <button class="btn-small" onclick="closeEditUserModal()">Cancel</button>
+            <button class="btn-small success" onclick="submitEditUser()">Save Changes</button>
+        </div>
+    </div>
+</div>
+
+<div id="resetPasswordModal" class="modal-backdrop" style="display: none;">
+    <div class="modal-card">
+        <h3>Reset Password/PIN</h3>
+        <p id="resetPasswordLabel"></p>
+
+        <input type="hidden" id="resetProfileId">
+
+        <label>New Password/PIN</label>
+        <input id="newPassword" type="password" placeholder="Minimum 6 characters">
+
+        <div class="modal-actions">
+            <button class="btn-small" onclick="closeResetPasswordModal()">Cancel</button>
+            <button class="btn-small danger" onclick="submitResetPassword()">Reset PIN</button>
+        </div>
+    </div>
+</div>
+
+<script>
+function openEditUserModalFromButton(button) {
+    document.getElementById("editProfileId").value = button.dataset.profileId;
+    document.getElementById("editFullName").value = button.dataset.fullName || "";
+    document.getElementById("editPhoneNumber").value = button.dataset.phoneNumber || "";
+    document.getElementById("editAddress").value = button.dataset.address || "";
+
+    document.getElementById("editUserModal").style.display = "flex";
+}
+
+function closeEditUserModal() {
+    document.getElementById("editUserModal").style.display = "none";
+}
+
+async function submitEditUser() {
+    const profileId = document.getElementById("editProfileId").value;
+
+    const payload = {
+        full_name: document.getElementById("editFullName").value.trim(),
+        phone_number: document.getElementById("editPhoneNumber").value.trim(),
+        address: document.getElementById("editAddress").value.trim()
+    };
+
+    if (!payload.full_name || !payload.address) {
+        alert("Full name and address are required.");
+        return;
+    }
+
+    const response = await fetch(`/api/admin/residents/${profileId}/edit`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+        alert(result.error || "Failed to update user.");
+        return;
+    }
+
+    alert(result.message || "User updated.");
+    window.location.reload();
+}
+
+function openResetPasswordModalFromButton(button) {
+    document.getElementById("resetProfileId").value = button.dataset.profileId;
+    document.getElementById("resetPasswordLabel").innerText =
+        `Reset password/PIN for ${button.dataset.userCode || "selected user"}`;
+
+    document.getElementById("newPassword").value = "";
+    document.getElementById("resetPasswordModal").style.display = "flex";
+}
+
+function closeResetPasswordModal() {
+    document.getElementById("resetPasswordModal").style.display = "none";
+}
+
+async function submitResetPassword() {
+    const profileId = document.getElementById("resetProfileId").value;
+    const newPassword = document.getElementById("newPassword").value.trim();
+
+    if (!newPassword || newPassword.length < 6) {
+        alert("Password/PIN must be at least 6 characters.");
+        return;
+    }
+
+    const response = await fetch(`/api/admin/users/${profileId}/reset-password`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            new_password: newPassword
+        })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+        alert(result.error || "Failed to reset password/PIN.");
+        return;
+    }
+
+    alert(result.message || "Password/PIN reset.");
+    closeResetPasswordModal();
+}
+</script>
+
+<style>
+.registry-page {
+    color: #f8fafc;
+}
+
+.page-header {
+    margin-bottom: 28px;
+}
+
+.eyebrow {
+    color: #ff4d57;
+    font-size: 12px;
+    font-weight: 900;
+    letter-spacing: 0.18em;
+    margin-bottom: 8px;
+}
+
+.page-header h1 {
+    font-size: 34px;
+    margin: 0;
+    font-weight: 950;
+    letter-spacing: -0.03em;
+    color: #f8fafc;
+}
+
+.page-subtitle {
+    margin-top: 8px;
+    color: #94a3b8;
+    font-weight: 500;
+}
+
+.registry-panel {
+    background: rgba(15, 23, 42, 0.88);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 22px;
+    padding: 22px;
+    margin-bottom: 24px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.24);
+}
+
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: center;
+    margin-bottom: 18px;
+}
+
+.panel-header h2 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 950;
+    color: #f8fafc;
+}
+
+.panel-header p {
+    margin: 6px 0 0;
+    color: #94a3b8;
+}
+
+.panel-link {
+    color: #ff6b73;
+    font-weight: 900;
+    text-decoration: none;
+}
+
+.table-wrapper {
+    overflow-x: auto;
+    border-radius: 16px;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.registry-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 920px;
+}
+
+.registry-table th {
+    text-align: left;
+    padding: 14px;
+    background: rgba(2, 6, 23, 0.74);
+    color: #94a3b8;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.registry-table td {
+    padding: 16px 14px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.10);
+    color: #e2e8f0;
+    font-weight: 600;
+    vertical-align: middle;
+}
+
+.user-code {
+    display: inline-flex;
+    padding: 7px 10px;
+    border-radius: 10px;
+    background: rgba(255, 77, 87, 0.12);
+    color: #ff6b73;
+    font-weight: 950;
+    letter-spacing: 0.06em;
+}
+
+.status-pill {
+    display: inline-flex;
+    padding: 7px 11px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 950;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.status-pill.pending {
+    background: rgba(245, 158, 11, 0.14);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.28);
+}
+
+.status-pill.approved {
+    background: rgba(34, 197, 94, 0.14);
+    color: #22c55e;
+    border: 1px solid rgba(34, 197, 94, 0.28);
+}
+
+.status-pill.rejected,
+.status-pill.suspended {
+    background: rgba(220, 38, 38, 0.14);
+    color: #f87171;
+    border: 1px solid rgba(220, 38, 38, 0.28);
+}
+
+.actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.btn-small {
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    background: rgba(255, 255, 255, 0.06);
+    color: #e2e8f0;
+    border-radius: 10px;
+    padding: 8px 11px;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.btn-small:hover {
+    background: rgba(255, 255, 255, 0.10);
+}
+
+.btn-small.success {
+    background: #16a34a;
+    color: white;
+    border-color: #16a34a;
+}
+
+.btn-small.danger {
+    background: #dc2626;
+    color: white;
+    border-color: #dc2626;
+}
+
+.empty-state {
+    padding: 42px;
+    text-align: center;
+    border: 1px dashed rgba(148, 163, 184, 0.2);
+    border-radius: 18px;
+    background: rgba(2, 6, 23, 0.36);
+}
+
+.empty-state h3 {
+    margin: 0 0 8px;
+    font-weight: 950;
+    color: #f8fafc;
+}
+
+.empty-state p {
+    margin: 0;
+    color: #94a3b8;
+}
+
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(2, 6, 23, 0.76);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    padding: 20px;
+}
+
+.modal-card {
+    width: min(460px, 100%);
+    background: #0f172a;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 18px;
+    padding: 22px;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+}
+
+.modal-card h3 {
+    margin: 0 0 16px;
+    color: #f8fafc;
+    font-weight: 950;
+}
+
+.modal-card p {
+    color: #94a3b8;
+    margin-bottom: 16px;
+}
+
+.modal-card label {
+    display: block;
+    margin: 12px 0 6px;
+    color: #cbd5e1;
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.modal-card input,
+.modal-card textarea {
+    box-sizing: border-box;
+    width: 100%;
+    background: rgba(15, 23, 42, 0.85);
+    color: #f8fafc;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    border-radius: 12px;
+    padding: 11px 12px;
+    outline: none;
+    font: inherit;
+}
+
+.modal-card input:focus,
+.modal-card textarea:focus {
+    border-color: #ff4d57;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 18px;
+}
+</style>
+{% endblock %}

@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="ops-grid">
+
+    <div class="map-command-panel">
+        <div class="map-command-top">
+            <div>
+                <h2>Live Barangay Monitoring Map</h2>
+                <p>
+                    Fixed T-Beam stations, barangay boundary, and real-time LoRa alert transmissions.
+                </p>
+            </div>
+
+            <div class="map-actions">
+                <button type="button" onclick="resetMapView()">Reset View</button>
+                <button type="button" onclick="focusLatestAlert()">Focus Latest Alert</button>
+            </div>
+        </div>
+
+        <div class="map-toolbar">
+            <div class="map-search-box">
+                <input
+                    type="text"
+                    id="landmark-search"
+                    placeholder="Search station, landmark, or area..."
+                    autocomplete="off"
+                >
+                <button type="button" onclick="searchLandmark()">Search</button>
+            </div>
+
+            <div id="landmark-results" class="landmark-results"></div>
+        </div>
+
+        <div id="alert-map"></div>
+
+        <div class="map-legend">
+            <span><i class="legend-station"></i> T-Beam Station</span>
+            <span><i class="legend-alert"></i> Active Alert</span>
+            <span><i class="legend-new"></i> New</span>
+            <span><i class="legend-progress"></i> Acknowledged / In Progress</span>
+            <span><i class="legend-resolved"></i> Resolved</span>
+            <span><i class="legend-ring"></i> Unverified</span>
+        </div>
+    </div>
+
+    <aside class="right-command-panel">
+
+        <section class="threat-status-card">
+            <div class="status-header">
+                <span>OPERATIONAL STATUS</span>
+                <strong>24/7 WATCH</strong>
+            </div>
+
+            <div class="metrics-tactical">
+                <div>
+                    <span>Total Alerts</span>
+                    <strong>{{ metrics.total_alerts }}</strong>
+                </div>
+                <div>
+                    <span>New</span>
+                    <strong>{{ metrics.new_alerts }}</strong>
+                </div>
+                <div>
+                    <span>Ack</span>
+                    <strong>{{ metrics.acknowledged_alerts }}</strong>
+                </div>
+                <div>
+                    <span>Resolved</span>
+                    <strong>{{ metrics.resolved_alerts }}</strong>
+                </div>
+            </div>
+
+            <div class="intel-line">
+                <span>Most Active Zone</span>
+                <strong>{{ metrics.most_active_zone }}</strong>
+            </div>
+
+            <div class="intel-line">
+                <span>Latest Alert</span>
+                <strong>{{ metrics.latest_alert_time }}</strong>
+            </div>
+        </section>
+
+        <section class="incident-feed-card">
+            <div class="section-title-row">
+                <h3>Live Transmission Feed</h3>
+                <a href="/alerts">View All</a>
+            </div>
+
+            <div id="recent-alerts-body" class="incident-feed">
+                {% for alert in recent_alerts %}
+                <article class="incident-item">
+                    <div class="incident-topline">
+                        <strong>{{ alert.emergency_label }}</strong>
+                        <span>{{ alert.alert_status }}</span>
+                    </div>
+
+                    <p>
+                        Station: {{ alert.device_id }} · User: {{ alert.user_id }}
+                    </p>
+
+                    <p>
+                        Reported Area: {{ alert.zone }} / {{ alert.subzone }}
+                    </p>
+
+                    <small>{{ alert.received_at }} · {{ alert.verification_status }}</small>
+                </article>
+                {% endfor %}
+            </div>
+        </section>
+
+        <div class="intel-line">
+            <span>Available Teams</span>
+            <strong>{{ metrics.available_teams }} / {{ metrics.total_teams }}</strong>
+        </div>
+
+        <div class="intel-line">
+            <span>Occupied Teams</span>
+            <strong>{{ metrics.occupied_teams }}</strong>
+        </div>
+
+        <section class="rescue-team-card">
+    <div class="section-title-row">
+        <h3>Rescue Teams</h3>
+        <span>{{ metrics.available_teams }} Available</span>
+    </div>
+
+    <div class="rescue-team-list">
+        {% for team in rescue_teams %}
+        <div class="rescue-team-item">
+            <div>
+                <strong>{{ team.team_name }}</strong>
+                <span>{{ team.team_id }} · {{ team.assigned_station_id }}</span>
+            </div>
+
+            <div class="team-status team-status-{{ team.team_status|lower|replace(' ', '-') }}">
+                {{ team.team_status }}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+
+    </aside>
+
+</section>
+
+{% endblock %}

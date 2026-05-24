@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Alert History</h1>
+
+<div class="filters">
+    <a href="/alerts">All</a>
+    <a href="/alerts?status=New">New</a>
+    <a href="/alerts?status=Pending">Pending</a>
+    <a href="/alerts?status=Assigned">Assigned</a>
+    <a href="/alerts?status=In%20Progress">In Progress</a>
+    <a href="/alerts?status=Resolved">Resolved</a>
+    <a href="/alerts?status=Failed">Failed</a>
+</div>
+
+<table>
+    <thead>
+        <tr>
+            <th>Alert ID</th>
+            <th>Device ID</th>
+            <th>User ID</th>
+            <th>Zone</th>
+            <th>Subzone</th>
+            <th>Emergency</th>
+            <th>Message</th>
+            <th>Received At</th>
+            <th>RSSI</th>
+            <th>SNR</th>
+            <th>Verification</th>
+            <th>Status</th>
+            <th>Assigned Team</th>
+            <th>ACK</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+
+    <tbody>
+        {% for alert in alerts %}
+        <tr>
+            <td>{{ alert.alert_id }}</td>
+            <td>{{ alert.device_id }}</td>
+            <td>{{ alert.user_id }}</td>
+            <td>{{ alert.zone }}</td>
+            <td>{{ alert.subzone }}</td>
+            <td>{{ alert.emergency_label }}</td>
+            <td>{{ alert.message }}</td>
+            <td>{{ alert.received_at }}</td>
+            <td>{{ alert.rssi }}</td>
+            <td>{{ alert.snr }}</td>
+            <td>{{ alert.verification_status }}</td>
+            <td>{{ alert.alert_status }}</td>
+            <td>
+                {% if alert.assigned_team_id %}
+                    <span class="badge">{{ alert.assigned_team_id }}</span>
+                {% else %}
+                    <span class="badge muted-badge">Unassigned</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if alert.ack_sent %}
+                    ACK Sent
+                {% else %}
+                    ACK Failed
+                {% endif %}
+            </td>
+            <td class="actions">
+                {% if not alert.assigned_team_id and alert.alert_status not in ['Resolved', 'Failed'] %}
+                <select id="team-select-{{ alert.alert_id }}">
+                    <option value="">Select Team</option>
+                    {% for team in rescue_teams %}
+                    <option value="{{ team.team_id }}">
+                        {{ team.team_name }} - {{ team.assigned_station_id }}
+                    </option>
+                    {% endfor %}
+                </select>
+
+                <button onclick="assignAlert('{{ alert.alert_id }}')">Assign</button>
+                {% endif %}
+
+                <button onclick="updateStatus('{{ alert.alert_id }}', 'Pending')">Pending</button>
+                <button onclick="updateStatus('{{ alert.alert_id }}', 'In Progress')">In Progress</button>
+                <button onclick="updateStatus('{{ alert.alert_id }}', 'Resolved')">Resolve</button>
+                <button onclick="updateStatus('{{ alert.alert_id }}', 'Failed')">Failed</button>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

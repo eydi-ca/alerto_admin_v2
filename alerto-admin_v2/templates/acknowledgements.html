@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Acknowledgement Tracking</h1>
+
+<table>
+    <thead>
+        <tr>
+            <th>Alert ID</th>
+            <th>Device ID</th>
+            <th>ACK Status</th>
+            <th>ACK Message</th>
+            <th>ACK Timestamp</th>
+            <th>Packet Status</th>
+            <th>RSSI</th>
+            <th>SNR</th>
+        </tr>
+    </thead>
+
+    <tbody>
+        {% for alert in alerts %}
+        <tr>
+            <td>{{ alert.alert_id }}</td>
+            <td>{{ alert.device_id }}</td>
+            <td>
+                {% if alert.ack_sent %}
+                    ACK Sent
+                {% else %}
+                    ACK Failed
+                {% endif %}
+            </td>
+            <td>{{ alert.ack_message }}</td>
+            <td>{{ alert.ack_sent_at }}</td>
+            <td>{{ alert.verification_status }}</td>
+            <td>{{ alert.rssi }}</td>
+            <td>{{ alert.snr }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

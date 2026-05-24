@@ -1,0 +1,316 @@
+{% extends "base.html" %}
+
+{% block title %}Approvals{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+    <p class="eyebrow">ALERTO ACCESS CONTROL</p>
+    <h1>Resident Approvals</h1>
+    <p class="page-subtitle">
+        Review resident registration requests submitted from the ALERTO mobile app.
+    </p>
+    </div>
+</div>
+
+<section class="approval-panel">
+    <div class="panel-header">
+    <div>
+        <h2>Pending Resident Requests</h2>
+        <p>{{ pending_residents|length }} request(s) waiting for review</p>
+    </div>
+    </div>
+
+    {% if pending_residents %}
+    <div class="approval-table-wrapper">
+        <table class="approval-table">
+        <thead>
+            <tr>
+                <th>User ID</th>
+                <th>Submitted</th>
+                <th>Full Name</th>
+                <th>Contact</th>
+                <th>Address</th>
+                <th>Status</th>
+                <th class="actions-col">Action</th>
+            </tr>
+            </thead>
+        <tbody>
+        {% for resident in pending_residents %}
+            <tr>
+                <td>
+                    <strong>{{ resident.user_code or "Pending" }}</strong>
+                </td>
+
+                <td>
+                    <div class="timestamp-block">
+                    <strong>{{ resident.created_at|manila_datetime }}</strong>
+                    <span>{{ resident.created_at|request_age }}</span>
+                    </div>
+                </td>
+
+                <td>{{ resident.full_name }}</td>
+                <td>{{ resident.phone_number or "Not provided" }}</td>
+                <td>{{ resident.address }}</td>
+
+                <td>
+                    <span class="status-pill pending">
+                    {{ resident.approval_status }}
+                    </span>
+                </td>
+            <td class="actions">
+                <button
+                class="btn-approve"
+                onclick="updateResidentApproval('{{ resident.id }}', 'approved')">
+                Approve
+                </button>
+                <button
+                class="btn-reject"
+                onclick="updateResidentApproval('{{ resident.id }}', 'rejected')">
+                Reject
+                </button>
+            </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <h3>No pending resident requests</h3>
+        <p>New resident registrations from the mobile app will appear here.</p>
+    </div>
+    {% endif %}
+</section>
+
+<script>
+async function updateResidentApproval(profileId, status) {
+    const confirmMessage =
+    status === "approved"
+        ? "Approve this resident account?"
+        : "Reject this resident account?";
+
+    if (!confirm(confirmMessage)) {
+    return;
+    }
+
+    try {
+    const response = await fetch(`/api/admin/residents/${profileId}/approval`, {
+        method: "POST",
+        headers: {
+        "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+        approval_status: status
+        })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+        alert(result.error || "Failed to update approval status.");
+        return;
+    }
+
+    alert(result.message || "Resident status updated.");
+    window.location.reload();
+    } catch (error) {
+    alert("Failed to connect to the admin server.");
+    }
+}
+</script>
+
+<style>
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 22px;
+  padding: 18px;
+  border: 1px solid var(--border-soft);
+  border-radius: 20px;
+  background:
+    linear-gradient(135deg, rgba(239, 68, 68, 0.12), transparent 35%),
+    rgba(12, 20, 28, 0.88);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.22);
+}
+
+.eyebrow {
+  color: var(--red);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  margin: 0 0 7px;
+}
+
+.page-header h1 {
+  font-size: 30px;
+  margin: 0;
+  font-weight: 900;
+  color: var(--text-main);
+  letter-spacing: 0.3px;
+}
+
+.page-subtitle {
+  margin-top: 8px;
+  color: var(--text-muted);
+  max-width: 680px;
+  line-height: 1.45;
+}
+
+.approval-panel {
+  background: var(--bg-panel);
+  border-radius: 22px;
+  padding: 20px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--border-soft);
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 18px;
+  align-items: center;
+}
+
+.panel-header h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 900;
+  color: var(--text-main);
+}
+
+.panel-header p {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+}
+
+.approval-table-wrapper {
+  overflow-x: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
+}
+
+.approval-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 980px;
+}
+
+.approval-table th {
+  text-align: left;
+  padding: 13px 14px;
+  background: rgba(5, 10, 16, 0.78);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.approval-table td {
+  padding: 15px 14px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  vertical-align: top;
+  color: var(--text-main);
+  font-size: 14px;
+}
+
+.approval-table tbody tr {
+  background: rgba(12, 20, 28, 0.38);
+}
+
+.approval-table tbody tr:hover {
+  background: rgba(56, 189, 248, 0.07);
+}
+
+.timestamp-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 150px;
+}
+
+.timestamp-block strong {
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.timestamp-block span {
+  color: var(--yellow);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.status-pill {
+  display: inline-flex;
+  padding: 7px 11px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.status-pill.pending {
+  background: rgba(250, 204, 21, 0.12);
+  color: var(--yellow);
+  border: 1px solid rgba(250, 204, 21, 0.34);
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.btn-approve,
+.btn-reject {
+  border: none;
+  border-radius: 11px;
+  padding: 9px 12px;
+  font-weight: 900;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.btn-approve {
+  background: rgba(34, 197, 94, 0.16);
+  color: var(--green);
+  border: 1px solid rgba(34, 197, 94, 0.38);
+}
+
+.btn-approve:hover {
+  background: rgba(34, 197, 94, 0.26);
+}
+
+.btn-reject {
+  background: rgba(239, 68, 68, 0.14);
+  color: var(--red);
+  border: 1px solid rgba(239, 68, 68, 0.38);
+}
+
+.btn-reject:hover {
+  background: rgba(239, 68, 68, 0.24);
+}
+
+.empty-state {
+  padding: 42px;
+  text-align: center;
+  border: 1px dashed var(--border-soft);
+  border-radius: 18px;
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.empty-state h3 {
+  margin: 0 0 8px;
+  font-weight: 900;
+  color: var(--text-main);
+}
+
+.empty-state p {
+  color: var(--text-muted);
+}
+</style>
+{% endblock %}

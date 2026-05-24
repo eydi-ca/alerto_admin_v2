@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ALERTO Command Center</title>
+
+    <link
+        rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+<div class="command-shell">
+    <header class="command-header">
+        <div class="brand-cluster">
+            <div class="brand-icon">△</div>
+            <div>
+                <h1>ALERTO</h1>
+                <p>Barangay Emergency Monitoring Command Center</p>
+            </div>
+        </div>
+
+        <nav class="command-nav">
+            <a class="{{ 'active' if request.path == '/' else '' }}" href="/">Live Map</a>
+            <a class="{{ 'active' if request.path.startswith('/alerts') else '' }}" href="/alerts">Alert History</a>
+            <a class="{{ 'active' if request.path.startswith('/acknowledgements') else '' }}" href="/acknowledgements">ACK Monitor</a>
+            <a class="{{ 'active' if request.path.startswith('/approvals') else '' }}" href="/approvals">Approvals</a>
+            <a class="{{ 'active' if request.path.startswith('/users-devices') else '' }}" href="/users-devices">Users / Stations</a>
+        </nav>
+
+        <div class="system-state">
+            <span class="live-dot"></span>
+            <span>LOCAL HUB ACTIVE</span>
+        </div>
+    </header>
+
+    <main class="command-content">
+        {% block content %}{% endblock %}
+    </main>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>
