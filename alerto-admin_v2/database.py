@@ -12,6 +12,15 @@ def get_connection():
 def now():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+def ensure_column(cur, table_name, column_name, column_definition):
+    cur.execute(f"PRAGMA table_info({table_name})")
+    columns = [row[1] for row in cur.fetchall()]
+
+    if column_name not in columns:
+        cur.execute(
+            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}"
+        )
+
 
 def init_db():
     conn = get_connection()
@@ -51,6 +60,42 @@ def init_db():
         address TEXT,
         status TEXT DEFAULT 'Active',
         created_at TEXT,
+        updated_at TEXT
+    )
+    """)
+    
+        # Extra columns for Supabase-to-SQLite offline sync.
+    # These ALTER checks make the update safe even if alerto.db already exists.
+    ensure_column(cur, "users", "auth_user_id", "TEXT")
+    ensure_column(cur, "users", "user_code", "TEXT")
+    ensure_column(cur, "users", "role", "TEXT DEFAULT 'resident'")
+    ensure_column(cur, "users", "approval_status", "TEXT DEFAULT 'pending'")
+    ensure_column(cur, "users", "source", "TEXT DEFAULT 'local'")
+    ensure_column(cur, "users", "last_synced_at", "TEXT")
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS stations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        station_id TEXT UNIQUE,
+        station_name TEXT,
+        device_id TEXT,
+        assigned_zone TEXT,
+        assigned_subzone TEXT,
+        lat REAL,
+        lng REAL,
+        status TEXT DEFAULT 'Standby',
+        description TEXT,
+        source TEXT DEFAULT 'local',
+        last_synced_at TEXT,
+        created_at TEXT,
+        updated_at TEXT
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS sync_metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT,
         updated_at TEXT
     )
     """)
@@ -485,3 +530,213 @@ def get_map_alerts(limit=50):
     rows = cur.fetchall()
     conn.close()
     return rows
+
+def upsert_synced_user(profile):
+    """
+    Saves an approved Supabase profile into local SQLite.
+    This allows the Raspberry Pi dashboard to display users even when offline.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+
+    user_code = profile.get("user_code") or profile.get("user_id")
+    auth_user_id = profile.get("auth_user_id")
+    full_name = profile.get("full_name")
+    phone_number = profile.get("phone_number")
+    address = profile.get("address")
+    role = profile.get("role") or "resident"
+    approval_status = profile.get("approval_status") or "pending"
+    created_at = profile.get("created_at") or now()
+    updated_at = profile.get("updated_at") or now()
+    synced_at = now()
+
+    if not user_code:
+        conn.close()
+        return False
+
+    cur.execute("""
+        INSERT INTO users (
+            user_id, user_code, auth_user_id, full_name, phone_number,
+            address, role, approval_status, status, source,
+            last_synced_at, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            user_code = excluded.user_code,
+            auth_user_id = excluded.auth_user_id,
+            full_name = excluded.full_name,
+            phone_number = excluded.phone_number,
+            address = excluded.address,
+            role = excluded.role,
+            approval_status = excluded.approval_status,
+            status = excluded.status,
+            source = excluded.source,
+            last_synced_at = excluded.last_synced_at,
+            updated_at = excluded.updated_at
+    """, (
+        user_code,
+        user_code,
+        auth_user_id,
+        full_name,
+        phone_number,
+        address,
+        role,
+        approval_status,
+        approval_status,
+        "supabase_sync",
+        synced_at,
+        created_at,
+        updated_at,
+    ))
+
+    conn.commit()
+    conn.close()
+    return True
+
+
+def get_local_users():
+    """
+    Reads users from local SQLite, not Supabase.
+    This is what the admin dashboard should use during offline operation.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            id,
+            user_id,
+            user_code,
+            auth_user_id,
+            full_name,
+            phone_number,
+            address,
+            role,
+            approval_status,
+            status,
+            source,
+            last_synced_at,
+            created_at,
+            updated_at
+        FROM users
+        ORDER BY created_at DESC
+    """)
+
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def get_local_user_by_code(user_code):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT *
+        FROM users
+        WHERE user_id = ? OR user_code = ?
+        LIMIT 1
+    """, (user_code, user_code))
+
+    row = cur.fetchone()
+    conn.close()
+    return row
+
+
+def upsert_station(station):
+    """
+    Saves a fixed T-Beam station into local SQLite.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+
+    station_id = station.get("station_id") or station.get("device_id")
+    if not station_id:
+        conn.close()
+        return False
+
+    cur.execute("""
+        INSERT INTO stations (
+            station_id, station_name, device_id, assigned_zone,
+            assigned_subzone, lat, lng, status, description,
+            source, last_synced_at, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(station_id) DO UPDATE SET
+            station_name = excluded.station_name,
+            device_id = excluded.device_id,
+            assigned_zone = excluded.assigned_zone,
+            assigned_subzone = excluded.assigned_subzone,
+            lat = excluded.lat,
+            lng = excluded.lng,
+            status = excluded.status,
+            description = excluded.description,
+            source = excluded.source,
+            last_synced_at = excluded.last_synced_at,
+            updated_at = excluded.updated_at
+    """, (
+        station_id,
+        station.get("station_name") or station.get("device_name") or station_id,
+        station.get("device_id") or station_id,
+        station.get("assigned_zone"),
+        station.get("assigned_subzone"),
+        station.get("lat"),
+        station.get("lng"),
+        station.get("status") or "Standby",
+        station.get("description"),
+        station.get("source") or "local_config",
+        now(),
+        station.get("created_at") or now(),
+        station.get("updated_at") or now(),
+    ))
+
+    conn.commit()
+    conn.close()
+    return True
+
+
+def get_local_stations():
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT *
+        FROM stations
+        ORDER BY station_id ASC
+    """)
+
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def set_sync_metadata(key, value):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO sync_metadata (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = excluded.updated_at
+    """, (key, value, now()))
+
+    conn.commit()
+    conn.close()
+
+
+def get_sync_metadata(key):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT value, updated_at
+        FROM sync_metadata
+        WHERE key = ?
+        LIMIT 1
+    """, (key,))
+
+    row = cur.fetchone()
+    conn.close()
+    return row

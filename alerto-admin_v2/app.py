@@ -11,6 +11,9 @@ from supabase_admin import (
     reset_user_password,
     update_resident_profile,
     get_profile_by_user_code,
+    get_profiles_for_offline_sync,
+    get_devices_for_offline_sync,
+    get_stations_for_offline_sync,
 )
 
 from flask_cors import CORS
@@ -27,13 +30,36 @@ from database import (
     reject_device,
     get_users,
     get_devices,
-    get_map_alerts
+    get_map_alerts,
+    upsert_synced_user,
+    get_local_users,
+    upsert_station,
+    get_local_stations,
+    set_sync_metadata,
+    get_sync_metadata,
 )
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 MANILA_TZ = timezone(timedelta(hours=8))
+
+def is_supabase_online():
+    """
+    Lightweight online check.
+    If Supabase is unreachable, admin pages should still load from SQLite.
+    """
+    try:
+        (
+            supabase_admin.supabase
+            .table("profiles")
+            .select("id")
+            .limit(1)
+            .execute()
+        )
+        return True
+    except Exception:
+        return False
 
 
 def _parse_supabase_datetime(value):
@@ -237,14 +263,37 @@ def api_reject_request(request_id):
 
 @app.route("/users-devices")
 def users_devices():
+    """
+    Users / Stations page now reads from local SQLite first.
+    Supabase is only used when the admin manually clicks Sync Offline Data.
+    """
     try:
-        users = get_all_residents()
-    except Exception as e:
-        print("USERS PAGE ERROR:")
+        users = [dict(row) for row in get_local_users()]
+    except Exception:
+        print("LOCAL USERS PAGE ERROR:")
         traceback.print_exc()
         users = []
 
-    stations = list(STATIONS.values())
+    try:
+        stations = [dict(row) for row in get_local_stations()]
+    except Exception:
+        print("LOCAL STATIONS PAGE ERROR:")
+        traceback.print_exc()
+        stations = []
+
+    # If local stations are still empty, seed them from the Flask STATIONS config.
+    if not stations:
+        for station in STATIONS.values():
+            upsert_station(station)
+
+        stations = [dict(row) for row in get_local_stations()]
+
+    sync_row = get_sync_metadata("offline_data_last_sync")
+
+    sync_status = {
+        "supabase_online": is_supabase_online(),
+        "last_sync": sync_row["value"] if sync_row else "Never synced",
+    }
 
     user_stats = {
         "total": len(users),
@@ -280,7 +329,57 @@ def users_devices():
         stations=stations,
         user_stats=user_stats,
         station_stats=station_stats,
+        sync_status=sync_status,
     )
+    
+@app.route("/api/admin/sync-offline-data", methods=["POST"])
+def api_sync_offline_data():
+    """
+    Pulls approved online preparation records from Supabase
+    and stores them locally in SQLite for offline dashboard use.
+    """
+    try:
+        synced_users = 0
+        synced_stations = 0
+
+        profiles = get_profiles_for_offline_sync()
+
+        for profile in profiles:
+            if upsert_synced_user(profile):
+                synced_users += 1
+
+        supabase_stations = get_stations_for_offline_sync()
+
+        if supabase_stations:
+            for station in supabase_stations:
+                if upsert_station(station):
+                    synced_stations += 1
+        else:
+            # Fallback to local configured fixed T-Beam stations.
+            for station in STATIONS.values():
+                if upsert_station(station):
+                    synced_stations += 1
+
+        timestamp = datetime.now(MANILA_TZ).strftime("%Y-%m-%d %H:%M:%S")
+        set_sync_metadata("offline_data_last_sync", timestamp)
+
+        return jsonify({
+            "status": "ok",
+            "message": "Offline data sync completed.",
+            "synced_users": synced_users,
+            "synced_stations": synced_stations,
+            "last_sync": timestamp,
+        }), 200
+
+    except Exception as e:
+        print("OFFLINE DATA SYNC ERROR:")
+        traceback.print_exc()
+
+        return jsonify({
+            "status": "error",
+            "error": "Offline data sync failed. Check internet/Supabase connection.",
+            "details": str(e),
+        }), 503
 
 
 @app.route("/api/map/alerts")

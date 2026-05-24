@@ -5,12 +5,42 @@
     <div class="page-header">
         <div>
             <p class="eyebrow">ALERTO REGISTRY</p>
-            <h1>Users and Devices Management</h1>
+            <h1>Users and Stations Management</h1>
             <p class="page-subtitle">
-                Manage registered residents, account status, password recovery, and device records.
+                Manage registered residents, account status, password recovery, and fixed T-Beam station records.
             </p>
         </div>
     </div>
+
+    <section class="sync-panel">
+        <div>
+            <p class="eyebrow">OFFLINE READINESS</p>
+            <h2>Local SQLite Sync Status</h2>
+
+            <p>
+                Supabase connection:
+                {% if sync_status.supabase_online %}
+                    <span class="status-pill approved">Online</span>
+                {% else %}
+                    <span class="status-pill suspended">Offline</span>
+                {% endif %}
+            </p>
+
+            <p>
+                Last successful sync:
+                <strong>{{ sync_status.last_sync }}</strong>
+            </p>
+
+            <p class="sync-note">
+                The dashboard should use local SQLite during emergency/offline operation.
+                Click sync while online to cache approved users and station records.
+            </p>
+        </div>
+
+        <button class="btn-small success" onclick="syncOfflineData()">
+            Sync Offline Data
+        </button>
+    </section>
 
     <section class="registry-panel">
         <div class="panel-header">
@@ -86,43 +116,53 @@
         {% endif %}
     </section>
 
-    <section class="registry-panel">
+        <section class="registry-panel">
         <div class="panel-header">
             <div>
-                <h2>Registered Devices</h2>
-                <p>{{ devices|length }} device record(s) found</p>
+                <h2>T-Beam Station Registry</h2>
+                <p>{{ stations|length }} local station record(s) configured</p>
             </div>
         </div>
 
-        {% if devices %}
+        {% if stations %}
         <div class="table-wrapper">
             <table class="registry-table">
                 <thead>
                     <tr>
+                        <th>Station ID</th>
+                        <th>Station Name</th>
                         <th>Device ID</th>
-                        <th>Assigned User ID</th>
+                        <th>Assigned Zone</th>
                         <th>Status</th>
-                        <th>Last Seen</th>
-                        <th>Approved At</th>
+                        <th>Coordinates</th>
+                        <th>Last Synced</th>
                     </tr>
                 </thead>
 
                 <tbody>
-                    {% for device in devices %}
+                    {% for station in stations %}
                     <tr>
                         <td>
                             <span class="user-code">
-                                {{ device.device_id }}
+                                {{ station.station_id or "—" }}
                             </span>
                         </td>
-                        <td>{{ device.user_id or device.linked_profile_id or "—" }}</td>
+                        <td>{{ station.station_name or "—" }}</td>
+                        <td>{{ station.device_id or station.station_id or "—" }}</td>
+                        <td>{{ station.assigned_zone or "—" }}</td>
                         <td>
-                            <span class="status-pill {{ device.approval_status or device.status or 'pending' }}">
-                                {{ device.approval_status or device.status or "pending" }}
+                            <span class="status-pill {{ station.status|lower if station.status else 'pending' }}">
+                                {{ station.status or "Standby" }}
                             </span>
                         </td>
-                        <td>{{ device.last_seen_at or "—" }}</td>
-                        <td>{{ device.approved_at or "—" }}</td>
+                        <td>
+                            {% if station.lat and station.lng %}
+                                {{ station.lat }}, {{ station.lng }}
+                            {% else %}
+                                Not set
+                            {% endif %}
+                        </td>
+                        <td>{{ station.last_synced_at or "Local config" }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -130,8 +170,8 @@
         </div>
         {% else %}
         <div class="empty-state">
-            <h3>No registered devices shown yet</h3>
-            <p>T-Beam station/device records will be connected here after the device registry module is completed.</p>
+            <h3>No T-Beam stations configured yet</h3>
+            <p>Station records will appear here after local configuration or Supabase sync.</p>
         </div>
         {% endif %}
     </section>
@@ -177,6 +217,34 @@
 </div>
 
 <script>
+async function syncOfflineData() {
+    const confirmed = confirm(
+        "Sync approved Supabase records into local SQLite for offline dashboard use?"
+    );
+
+    if (!confirmed) {
+        return;
+    }
+
+    const response = await fetch("/api/admin/sync-offline-data", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"}
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+        alert(result.error || "Offline sync failed.");
+        return;
+    }
+
+    alert(
+        `${result.message}\n\nSynced users: ${result.synced_users}\nSynced stations: ${result.synced_stations}\nLast sync: ${result.last_sync}`
+    );
+
+    window.location.reload();
+}
+
 function openEditUserModalFromButton(button) {
     document.getElementById("editProfileId").value = button.dataset.profileId;
     document.getElementById("editFullName").value = button.dataset.fullName || "";
@@ -264,6 +332,36 @@ async function submitResetPassword() {
 </script>
 
 <style>
+.sync-panel {
+    display: flex;
+    justify-content: space-between;
+    gap: 18px;
+    align-items: center;
+    background: rgba(2, 6, 23, 0.72);
+    border: 1px solid rgba(34, 197, 94, 0.20);
+    border-radius: 22px;
+    padding: 20px 22px;
+    margin-bottom: 24px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.20);
+}
+
+.sync-panel h2 {
+    margin: 0 0 10px;
+    color: #f8fafc;
+    font-size: 20px;
+    font-weight: 950;
+}
+
+.sync-panel p {
+    margin: 6px 0;
+    color: #cbd5e1;
+}
+
+.sync-note {
+    color: #94a3b8 !important;
+    max-width: 760px;
+}
+
 .registry-page {
     color: #f8fafc;
 }

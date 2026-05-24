@@ -324,3 +324,58 @@ def update_resident_profile(
         raise RuntimeError("No resident profile was updated.")
 
     return result.data[0]
+  
+def get_profiles_for_offline_sync():
+    """
+    Fetch approved profiles from Supabase so the Raspberry Pi can cache them locally.
+    These records are used by the dashboard and receiver.py during offline operation.
+    """
+    result = (
+        supabase
+        .table("profiles")
+        .select("*")
+        .eq("approval_status", "approved")
+        .order("created_at", desc=True)
+        .execute()
+    )
+
+    return result.data or []
+
+
+def get_devices_for_offline_sync():
+    """
+    Fetch approved device records from Supabase if the devices table exists.
+    If the table is empty or unavailable, the dashboard can still use local configured stations.
+    """
+    try:
+        result = (
+            supabase
+            .table("devices")
+            .select("*")
+            .eq("approval_status", "approved")
+            .execute()
+        )
+
+        return result.data or []
+
+    except Exception:
+        return []
+
+
+def get_stations_for_offline_sync():
+    """
+    Fetch station records from Supabase if the stations table exists.
+    If not available, local Flask STATIONS config will be used as fallback.
+    """
+    try:
+        result = (
+            supabase
+            .table("stations")
+            .select("*")
+            .execute()
+        )
+
+        return result.data or []
+
+    except Exception:
+        return []
