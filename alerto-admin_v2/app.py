@@ -48,7 +48,11 @@ from database import (
 )
 
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+CORS(
+    app,
+    resources={r"/*": {"origins": "*"}},
+    supports_credentials=False
+)
 
 init_db()
 
@@ -278,6 +282,26 @@ def api_assign_alert(alert_id):
         "rescuer_code": rescuer_code,
         "status": "Assigned"
     })
+    
+@app.route("/api/rescuer/assignments/<rescuer_code>", methods=["GET"])
+def api_get_rescuer_assignments(rescuer_code):
+    rescuer_code = rescuer_code.strip().upper()
+
+    try:
+        assignments = get_rescuer_assignments(rescuer_code)
+
+        clean_assignments = []
+        for assignment in assignments:
+            clean_assignments.append(dict(assignment))
+
+        return jsonify({
+            "rescuer_code": rescuer_code,
+            "assignments": clean_assignments
+        })
+
+    except Exception as exc:
+        print("GET RESCUER ASSIGNMENTS API ERROR:", exc)
+        return jsonify({"error": str(exc)}), 500
 
 @app.route("/api/rescuer/assignments/<int:assignment_id>/status", methods=["POST"])
 def api_update_rescuer_assignment_status(assignment_id):

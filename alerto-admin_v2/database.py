@@ -1052,17 +1052,19 @@ def process_rescuer_status_update(
             updated_at = ?
         WHERE id = ?
     """, (
-        status,
+        normalized_status,
         timestamp,
-        assignment_id,
+        assignment["id"],
     ))
 
     cur.execute("""
         UPDATE alerts
-        SET alert_status = ?
+        SET alert_status = ?,
+            updated_at = ?
         WHERE alert_id = ?
     """, (
         dashboard_status,
+        timestamp,
         alert_id,
     ))
 
