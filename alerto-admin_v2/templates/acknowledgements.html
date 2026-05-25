@@ -1,41 +1,119 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h1>Acknowledgement Tracking</h1>
+<div class="ack-page compact-monitor-page">
+    <div class="compact-page-header">
+        <div>
+            <h1>Acknowledgement Monitor</h1>
+            <p>Track packet acknowledgement, verification status, and signal readings from received LoRa alerts.</p>
+        </div>
 
-<table>
-    <thead>
-        <tr>
-            <th>Alert ID</th>
-            <th>Device ID</th>
-            <th>ACK Status</th>
-            <th>ACK Message</th>
-            <th>ACK Timestamp</th>
-            <th>Packet Status</th>
-            <th>RSSI</th>
-            <th>SNR</th>
-        </tr>
-    </thead>
+        <div class="compact-header-actions">
+            <button class="btn-small" onclick="window.location.reload()">Refresh</button>
+            <span id="ack-refresh-label">Auto-refresh in 20s</span>
+        </div>
+    </div>
 
-    <tbody>
-        {% for alert in alerts %}
-        <tr>
-            <td>{{ alert.alert_id }}</td>
-            <td>{{ alert.device_id }}</td>
-            <td>
-                {% if alert.ack_sent %}
-                    ACK Sent
-                {% else %}
-                    ACK Failed
-                {% endif %}
-            </td>
-            <td>{{ alert.ack_message }}</td>
-            <td>{{ alert.ack_sent_at }}</td>
-            <td>{{ alert.verification_status }}</td>
-            <td>{{ alert.rssi }}</td>
-            <td>{{ alert.snr }}</td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+    <div class="compact-toolbar">
+        <input
+            type="text"
+            id="ack-search"
+            placeholder="Search alert ID or device ID..."
+            oninput="filterAckRows()">
+
+        <select id="ack-status-filter" onchange="filterAckRows()">
+            <option value="all">All ACK Status</option>
+            <option value="sent">ACK Sent</option>
+            <option value="failed">ACK Failed</option>
+        </select>
+
+        <select id="packet-status-filter" onchange="filterAckRows()">
+            <option value="all">All Packet Status</option>
+            <option value="verified">Verified</option>
+            <option value="unverified">Unverified</option>
+        </select>
+    </div>
+
+    <section class="compact-table-card">
+        <table class="compact-monitor-table">
+            <thead>
+                <tr>
+                    <th>Alert ID</th>
+                    <th>Device</th>
+                    <th>ACK</th>
+                    <th>ACK Message</th>
+                    <th>Timestamp</th>
+                    <th>Packet</th>
+                    <th>RSSI</th>
+                    <th>SNR</th>
+                </tr>
+            </thead>
+
+            <tbody>
+                {% for alert in alerts %}
+                <tr
+                    class="ack-row"
+                    data-search="{{ (alert.alert_id or '')|lower }} {{ (alert.device_id or '')|lower }}"
+                    data-ack="{{ 'sent' if alert.ack_sent else 'failed' }}"
+                    data-packet="{{ (alert.verification_status or 'unverified')|lower }}"
+                >
+                    <td class="mono-cell">{{ alert.alert_id }}</td>
+                    <td>{{ alert.device_id or "—" }}</td>
+
+                    <td>
+                        {% if alert.ack_sent %}
+                            <span class="mini-pill good">ACK Sent</span>
+                        {% else %}
+                            <span class="mini-pill bad">ACK Failed</span>
+                        {% endif %}
+                    </td>
+
+                    <td class="mono-cell">{{ alert.ack_message or "None" }}</td>
+                    <td>{{ alert.ack_sent_at or "None" }}</td>
+
+                    <td>
+                        <span class="mini-pill neutral">
+                            {{ alert.verification_status or "Unverified" }}
+                        </span>
+                    </td>
+
+                    <td>{{ alert.rssi or "—" }}</td>
+                    <td>{{ alert.snr or "—" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+</div>
+
+<script>
+function filterAckRows() {
+    const searchValue = (document.getElementById("ack-search")?.value || "").toLowerCase();
+    const ackStatus = document.getElementById("ack-status-filter")?.value || "all";
+    const packetStatus = document.getElementById("packet-status-filter")?.value || "all";
+
+    document.querySelectorAll(".ack-row").forEach(row => {
+        const matchesSearch = row.dataset.search.includes(searchValue);
+        const matchesAck = ackStatus === "all" || row.dataset.ack === ackStatus;
+        const matchesPacket = packetStatus === "all" || row.dataset.packet === packetStatus;
+
+        row.style.display = matchesSearch && matchesAck && matchesPacket ? "" : "none";
+    });
+}
+
+let ackRefreshSeconds = 20;
+
+setInterval(() => {
+    ackRefreshSeconds -= 1;
+
+    const label = document.getElementById("ack-refresh-label");
+    if (label) {
+        label.textContent = `Auto-refresh in ${ackRefreshSeconds}s`;
+    }
+
+    if (ackRefreshSeconds <= 0) {
+        window.location.reload();
+    }
+}, 1000);
+</script>
 {% endblock %}

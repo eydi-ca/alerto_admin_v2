@@ -2,7 +2,7 @@ from LoRaRF import SX127x
 from datetime import datetime
 import time
 
-from database import insert_alert, insert_invalid_packet
+from database import insert_alert, insert_invalid_packet, process_rescuer_status_update
 # ==============================
 # ALERTO Raspberry Pi Hub
 # SX1276 Receiver + Compact ACK Sender
@@ -113,6 +113,45 @@ def parse_compact_alert_packet(message):
 
     return alert
 
+def parse_rescuer_status_packet(message):
+    """
+    Expected format:
+    S|alert_id|station_id|rescuer_code|status|timestamp
+
+    Example:
+    S|260525041500A7|TB002|R001|RESOLVED|260525050500
+    """
+
+    parts = message.strip().split("|")
+
+    if len(parts) < 6:
+        return None
+
+    if parts[0] != "S":
+        return None
+
+    status_update = {
+        "packet_type": parts[0],
+        "alert_id": parts[1],
+        "station_id": parts[2],
+        "rescuer_code": parts[3],
+        "status": parts[4],
+        "packet_timestamp": parts[5],
+    }
+
+    if status_update["alert_id"] == "":
+        return None
+
+    if status_update["station_id"] == "":
+        return None
+
+    if status_update["rescuer_code"] == "":
+        return None
+
+    if status_update["status"] == "":
+        return None
+
+    return status_update
 
 def expand_emergency_type(code):
     emergency_types = {
@@ -178,6 +217,26 @@ def save_alert_to_database(alert, raw_packet, received_at, rssi=None, snr=None, 
 
     print("Alert saved to SQLite database.")
     
+def save_rescuer_status_to_database(status_update, raw_packet, received_at, rssi=None, snr=None):
+    success, message = process_rescuer_status_update(
+        alert_id=status_update["alert_id"],
+        station_id=status_update["station_id"],
+        rescuer_code=status_update["rescuer_code"],
+        status=status_update["status"],
+        packet_timestamp=status_update["packet_timestamp"],
+        raw_packet=raw_packet,
+        rssi=rssi,
+        snr=snr
+    )
+
+    if success:
+        print("Rescuer status update saved to SQLite.")
+    else:
+        print("Rescuer status update rejected.")
+        print(f"Reason: {message}")
+
+    return success, message
+    
 def save_invalid_packet_to_database(raw_packet, reason, received_at, rssi=None, snr=None):
     insert_invalid_packet(
         raw_packet=raw_packet,
@@ -223,23 +282,46 @@ try:
             pass
 
         alert = parse_compact_alert_packet(message)
+        status_update = parse_rescuer_status_packet(message)
 
-        if alert is None:
-          print("Invalid compact ALERTO packet.")
+        if alert is None and status_update is None:
+            print("Invalid ALERTO packet.")
 
-          ack = build_ack("UNKNOWN", success=False)
-          send_ack(ack)
+            ack = build_ack("UNKNOWN", success=False)
+            send_ack(ack)
 
-          save_invalid_packet_to_database(
-              raw_packet=message,
-              reason="Invalid compact ALERTO packet format",
-              received_at=received_at,
-              rssi=rssi,
-              snr=snr
-          )
+            save_invalid_packet_to_database(
+                raw_packet=message,
+                reason="Invalid ALERTO packet format",
+                received_at=received_at,
+                rssi=rssi,
+                snr=snr
+            )
 
-          time.sleep(0.2)
-          continue
+            time.sleep(0.2)
+            continue
+
+        if status_update is not None:
+            print("Valid ALERTO rescuer status update packet.")
+            print(f"Alert ID: {status_update['alert_id']}")
+            print(f"Station ID: {status_update['station_id']}")
+            print(f"Rescuer Code: {status_update['rescuer_code']}")
+            print(f"Status: {status_update['status']}")
+            print(f"Packet Timestamp: {status_update['packet_timestamp']}")
+
+            success, result_message = save_rescuer_status_to_database(
+                status_update=status_update,
+                raw_packet=message,
+                received_at=received_at,
+                rssi=rssi,
+                snr=snr
+            )
+
+            ack = build_ack(status_update["alert_id"], success=success)
+            send_ack(ack)
+
+            time.sleep(0.2)
+            continue
 
         print("Valid compact ALERTO alert packet.")
         print(f"Alert ID: {alert['alert_id']}")

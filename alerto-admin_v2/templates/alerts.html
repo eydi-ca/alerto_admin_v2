@@ -1,89 +1,332 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h1>Alert History</h1>
+{% set active_statuses = ['New', 'Acknowledged', 'Assigned', 'Responding', 'On Scene'] %}
+{% set closed_statuses = ['Resolved', 'Cancelled', 'Invalid', 'Failed'] %}
 
-<div class="filters">
-    <a href="/alerts">All</a>
-    <a href="/alerts?status=New">New</a>
-    <a href="/alerts?status=Pending">Pending</a>
-    <a href="/alerts?status=Assigned">Assigned</a>
-    <a href="/alerts?status=In%20Progress">In Progress</a>
-    <a href="/alerts?status=Resolved">Resolved</a>
-    <a href="/alerts?status=Failed">Failed</a>
+{% set ns = namespace(total=0, active=0, new=0, assigned=0, responding=0, resolved=0, cancelled=0) %}
+{% for alert in alerts %}
+    {% set ns.total = ns.total + 1 %}
+    {% set current_status = alert.alert_status or 'New' %}
+    {% if current_status in active_statuses %}{% set ns.active = ns.active + 1 %}{% endif %}
+    {% if current_status == 'New' %}{% set ns.new = ns.new + 1 %}{% endif %}
+    {% if current_status == 'Assigned' %}{% set ns.assigned = ns.assigned + 1 %}{% endif %}
+    {% if current_status == 'Responding' or current_status == 'On Scene' %}{% set ns.responding = ns.responding + 1 %}{% endif %}
+    {% if current_status == 'Resolved' %}{% set ns.resolved = ns.resolved + 1 %}{% endif %}
+    {% if current_status == 'Cancelled' or current_status == 'Invalid' or current_status == 'Failed' %}{% set ns.cancelled = ns.cancelled + 1 %}{% endif %}
+{% endfor %}
+
+<div class="dispatch-page">
+    <div class="dispatch-topbar">
+        <div>
+            <p class="eyebrow">INCIDENT COMMAND</p>
+            <h1>Alert Dispatch Center</h1>
+            <p class="page-subtitle">
+                Assign active emergency alerts to responders and monitor response progress from the local hub.
+            </p>
+        </div>
+
+        <div class="dispatch-refresh-box">
+            <button class="btn-small" onclick="window.location.reload()">Refresh Now</button>
+            <label class="auto-refresh-toggle">
+                <input type="checkbox" id="auto-refresh-toggle" checked onchange="toggleAutoRefresh()">
+                Auto refresh
+            </label>
+            <span id="refresh-countdown">30s</span>
+        </div>
+    </div>
+
+    <section class="dispatch-kpi-grid">
+        <div class="dispatch-kpi critical">
+            <span>Active Incidents</span>
+            <strong>{{ ns.active }}</strong>
+        </div>
+        <div class="dispatch-kpi">
+            <span>New</span>
+            <strong>{{ ns.new }}</strong>
+        </div>
+        <div class="dispatch-kpi">
+            <span>Assigned</span>
+            <strong>{{ ns.assigned }}</strong>
+        </div>
+        <div class="dispatch-kpi">
+            <span>Responding / On Scene</span>
+            <strong>{{ ns.responding }}</strong>
+        </div>
+        <div class="dispatch-kpi resolved">
+            <span>Resolved</span>
+            <strong>{{ ns.resolved }}</strong>
+        </div>
+    </section>
+
+    <section class="responder-roster-card">
+        <div class="section-slim-header">
+            <div>
+                <p class="eyebrow">RESPONDER AVAILABILITY</p>
+                <h2>Rescue Team Status</h2>
+            </div>
+            <p>Available responders can be assigned to new alerts. Occupied responders are already handling an active incident.</p>
+        </div>
+
+        {% if rescue_teams %}
+        <div class="responder-roster-grid">
+            {% for rescuer in rescue_teams %}
+                {% set rescuer_code = rescuer.user_code or rescuer.user_id %}
+                {% set rn = namespace(active_count=0, latest_alert='') %}
+                {% for alert in alerts %}
+                    {% if alert.assigned_rescuer_code == rescuer_code and alert.alert_status not in closed_statuses %}
+                        {% set rn.active_count = rn.active_count + 1 %}
+                        {% set rn.latest_alert = alert.alert_id %}
+                    {% endif %}
+                {% endfor %}
+
+                <div class="responder-card {% if rn.active_count > 0 %}occupied{% else %}available{% endif %}">
+                    <div>
+                        <strong>{{ rescuer_code }}</strong>
+                        <span>{{ rescuer.full_name or 'Unnamed Rescuer' }}</span>
+                    </div>
+                    {% if rn.active_count > 0 %}
+                        <em>Occupied · {{ rn.latest_alert }}</em>
+                    {% else %}
+                        <em>Available</em>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state compact-empty">
+            <h3>No synced rescuers</h3>
+            <p>Create a rescuer account in Users / Stations, then Sync Now.</p>
+        </div>
+        {% endif %}
+    </section>
+
+    <section class="dispatch-board-card">
+        <div class="dispatch-board-header">
+            <div>
+                <p class="eyebrow">DISPATCH QUEUE</p>
+                <h2>Emergency Alerts</h2>
+            </div>
+
+            <div class="dispatch-tools">
+                <input id="alert-search" type="text" placeholder="Search alert, resident, zone, station..." oninput="applyAlertFilters()">
+                <select id="status-filter" onchange="applyAlertFilters()">
+                    <option value="all">All statuses</option>
+                    <option value="New">New</option>
+                    <option value="Assigned">Assigned</option>
+                    <option value="Responding">Responding</option>
+                    <option value="On Scene">On Scene</option>
+                    <option value="Resolved">Resolved</option>
+                    <option value="Cancelled">Cancelled</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="dispatch-filter-pills">
+            <a class="{% if not selected_status %}active{% endif %}" href="/alerts">All</a>
+            <a class="{% if selected_status == 'New' %}active{% endif %}" href="/alerts?status=New">New</a>
+            <a class="{% if selected_status == 'Assigned' %}active{% endif %}" href="/alerts?status=Assigned">Assigned</a>
+            <a class="{% if selected_status == 'Responding' %}active{% endif %}" href="/alerts?status=Responding">Responding</a>
+            <a class="{% if selected_status == 'On Scene' %}active{% endif %}" href="/alerts?status=On%20Scene">On Scene</a>
+            <a class="{% if selected_status == 'Resolved' %}active{% endif %}" href="/alerts?status=Resolved">Resolved</a>
+        </div>
+
+        {% if alerts %}
+        <div class="dispatch-alert-list">
+            {% for alert in alerts %}
+            {% set current_status = alert.alert_status or 'New' %}
+            <article class="dispatch-alert-card alert-row"
+                data-status="{{ current_status }}"
+                data-search="{{ (alert.alert_id or '')|lower }} {{ (alert.device_id or '')|lower }} {{ (alert.user_id or '')|lower }} {{ (alert.resident_name or '')|lower }} {{ (alert.zone or '')|lower }} {{ (alert.subzone or '')|lower }} {{ (alert.emergency_label or alert.emergency_type or '')|lower }} {{ (alert.message or '')|lower }}">
+
+                <div class="alert-main-column">
+                    <div class="alert-title-line">
+                        <span class="alert-code-chip">{{ alert.alert_id }}</span>
+                        <span class="status-pill {{ current_status|lower|replace(' ', '-') }}">{{ current_status }}</span>
+                    </div>
+
+                    <div class="alert-context-grid">
+                        <div>
+                            <label>Emergency</label>
+                            <strong>{{ alert.emergency_label or alert.emergency_type or 'Unknown' }}</strong>
+                            <p>{{ alert.message or 'No message provided' }}</p>
+                        </div>
+                        <div>
+                            <label>Location</label>
+                            <strong>Zone {{ alert.zone or '—' }} · Subzone {{ alert.subzone or '—' }}</strong>
+                            <p>Station {{ alert.device_id or '—' }}</p>
+                        </div>
+                        <div>
+                            <label>Resident</label>
+                            <strong>{{ alert.resident_name or alert.user_id or 'Unknown / Not synced' }}</strong>
+                            <p>{{ alert.resident_phone or 'No phone synced' }}</p>
+                        </div>
+                        <div>
+                            <label>Signal / ACK</label>
+                            <strong>RSSI {{ alert.rssi or '—' }} · SNR {{ alert.snr or '—' }}</strong>
+                            <p>{% if alert.ack_sent %}ACK Sent{% else %}ACK Failed{% endif %} · {{ alert.verification_status or 'Unverified' }}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <aside class="alert-operation-column">
+                    <div class="assigned-responder-box">
+                        <label>Responder</label>
+                        {% if alert.assigned_rescuer_code %}
+                            <strong>{{ alert.assigned_rescuer_code }}</strong>
+                            <span>{{ alert.assigned_rescuer_name or 'Assigned rescuer' }}</span>
+                        {% else %}
+                            <strong>Unassigned</strong>
+                            <span>Needs dispatcher action</span>
+                        {% endif %}
+                    </div>
+
+                    {% if current_status not in closed_statuses %}
+                        {% if not alert.assigned_rescuer_code %}
+                        <div class="assign-control-row">
+                            <select id="rescuer-select-{{ alert.alert_id }}">
+                                <option value="">Select rescuer</option>
+                                {% for rescuer in rescue_teams %}
+                                    {% set rescuer_code = rescuer.user_code or rescuer.user_id %}
+                                    <option value="{{ rescuer_code }}">
+                                        {{ rescuer_code }} - {{ rescuer.full_name }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                            <button class="btn-small success" onclick="assignAlert('{{ alert.alert_id }}')">Assign</button>
+                        </div>
+                        <button class="btn-small danger-soft full-action" onclick="updateStatus('{{ alert.alert_id }}', 'Cancelled')">Cancel / Invalid</button>
+                        {% else %}
+                        <div class="next-action-grid">
+                            {% if current_status in ['Assigned', 'Acknowledged'] %}
+                                <button onclick="updateStatus('{{ alert.alert_id }}', 'Responding')">Mark Responding</button>
+                            {% elif current_status == 'Responding' %}
+                                <button onclick="updateStatus('{{ alert.alert_id }}', 'On Scene')">Mark On Scene</button>
+                            {% elif current_status == 'On Scene' %}
+                                <button class="success-soft" onclick="updateStatus('{{ alert.alert_id }}', 'Resolved')">Resolve Alert</button>
+                            {% else %}
+                                <button onclick="updateStatus('{{ alert.alert_id }}', 'Responding')">Mark Responding</button>
+                            {% endif %}
+                            <button class="danger-soft" onclick="updateStatus('{{ alert.alert_id }}', 'Cancelled')">Cancel</button>
+                        </div>
+                        {% endif %}
+                    {% else %}
+                        <div class="closed-alert-note">Closed operation</div>
+                    {% endif %}
+                </aside>
+            </article>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <h3>No alerts found</h3>
+            <p>Incoming LoRa alerts will appear here after receiver.py saves packets into local SQLite.</p>
+        </div>
+        {% endif %}
+    </section>
 </div>
 
-<table>
-    <thead>
-        <tr>
-            <th>Alert ID</th>
-            <th>Device ID</th>
-            <th>User ID</th>
-            <th>Zone</th>
-            <th>Subzone</th>
-            <th>Emergency</th>
-            <th>Message</th>
-            <th>Received At</th>
-            <th>RSSI</th>
-            <th>SNR</th>
-            <th>Verification</th>
-            <th>Status</th>
-            <th>Assigned Team</th>
-            <th>ACK</th>
-            <th>Actions</th>
-        </tr>
-    </thead>
+<script>
+let autoRefreshEnabled = true;
+let refreshSeconds = 30;
+let refreshTimer = null;
 
-    <tbody>
-        {% for alert in alerts %}
-        <tr>
-            <td>{{ alert.alert_id }}</td>
-            <td>{{ alert.device_id }}</td>
-            <td>{{ alert.user_id }}</td>
-            <td>{{ alert.zone }}</td>
-            <td>{{ alert.subzone }}</td>
-            <td>{{ alert.emergency_label }}</td>
-            <td>{{ alert.message }}</td>
-            <td>{{ alert.received_at }}</td>
-            <td>{{ alert.rssi }}</td>
-            <td>{{ alert.snr }}</td>
-            <td>{{ alert.verification_status }}</td>
-            <td>{{ alert.alert_status }}</td>
-            <td>
-                {% if alert.assigned_team_id %}
-                    <span class="badge">{{ alert.assigned_team_id }}</span>
-                {% else %}
-                    <span class="badge muted-badge">Unassigned</span>
-                {% endif %}
-            </td>
-            <td>
-                {% if alert.ack_sent %}
-                    ACK Sent
-                {% else %}
-                    ACK Failed
-                {% endif %}
-            </td>
-            <td class="actions">
-                {% if not alert.assigned_team_id and alert.alert_status not in ['Resolved', 'Failed'] %}
-                <select id="team-select-{{ alert.alert_id }}">
-                    <option value="">Select Team</option>
-                    {% for team in rescue_teams %}
-                    <option value="{{ team.team_id }}">
-                        {{ team.team_name }} - {{ team.assigned_station_id }}
-                    </option>
-                    {% endfor %}
-                </select>
+function startAutoRefresh() {
+    clearInterval(refreshTimer);
+    refreshSeconds = 30;
+    updateRefreshCountdown();
 
-                <button onclick="assignAlert('{{ alert.alert_id }}')">Assign</button>
-                {% endif %}
+    refreshTimer = setInterval(() => {
+        if (!autoRefreshEnabled) return;
 
-                <button onclick="updateStatus('{{ alert.alert_id }}', 'Pending')">Pending</button>
-                <button onclick="updateStatus('{{ alert.alert_id }}', 'In Progress')">In Progress</button>
-                <button onclick="updateStatus('{{ alert.alert_id }}', 'Resolved')">Resolve</button>
-                <button onclick="updateStatus('{{ alert.alert_id }}', 'Failed')">Failed</button>
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+        refreshSeconds -= 1;
+        updateRefreshCountdown();
+
+        if (refreshSeconds <= 0) {
+            window.location.reload();
+        }
+    }, 1000);
+}
+
+function updateRefreshCountdown() {
+    const label = document.getElementById("refresh-countdown");
+    if (label) {
+        label.textContent = autoRefreshEnabled ? `${refreshSeconds}s` : "Paused";
+    }
+}
+
+function toggleAutoRefresh() {
+    const checkbox = document.getElementById("auto-refresh-toggle");
+    autoRefreshEnabled = checkbox ? checkbox.checked : true;
+    updateRefreshCountdown();
+}
+
+function applyAlertFilters() {
+    const searchValue = (document.getElementById("alert-search")?.value || "").toLowerCase();
+    const statusValue = document.getElementById("status-filter")?.value || "all";
+    const rows = Array.from(document.querySelectorAll(".alert-row"));
+
+    rows.forEach(row => {
+        const matchesSearch = row.dataset.search.includes(searchValue);
+        const matchesStatus = statusValue === "all" || row.dataset.status === statusValue;
+        row.style.display = matchesSearch && matchesStatus ? "grid" : "none";
+    });
+}
+
+async function assignAlert(alertId) {
+    const select = document.getElementById(`rescuer-select-${alertId}`);
+
+    if (!select) {
+        alert("Rescuer selector was not found for this alert.");
+        return;
+    }
+
+    const rescuerCode = select.value;
+
+    if (!rescuerCode) {
+        alert("Please select a rescuer first.");
+        return;
+    }
+
+    const response = await fetch(`/api/alerts/${alertId}/assign`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            rescuer_code: rescuerCode
+        })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+        alert(result.error || "Failed to assign alert.");
+        return;
+    }
+
+    alert(result.message || "Alert assigned.");
+    window.location.reload();
+}
+
+async function updateStatus(alertId, status) {
+    const response = await fetch(`/api/alerts/${alertId}/status`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            status: status,
+            notes: "Updated from admin dispatch board"
+        })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+        alert(result.error || "Failed to update status.");
+        return;
+    }
+
+    window.location.reload();
+}
+
+document.addEventListener("DOMContentLoaded", startAutoRefresh);
+</script>
 {% endblock %}

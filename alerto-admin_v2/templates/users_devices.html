@@ -7,7 +7,7 @@
             <p class="eyebrow">ALERTO REGISTRY</p>
             <h1>Users and Stations Management</h1>
             <p class="page-subtitle">
-                Manage registered residents, account status, password recovery, and fixed T-Beam station records.
+                Manage registered residents, rescuer accounts, offline sync status, and fixed T-Beam station records.
             </p>
         </div>
     </div>
@@ -32,24 +32,150 @@
             </p>
 
             <p class="sync-note">
-                The dashboard should use local SQLite during emergency/offline operation.
-                Click sync while online to cache approved users and station records.
+                When online, the dashboard automatically syncs Supabase records into local SQLite.
+                When offline, the dashboard keeps showing the last synced local data.
             </p>
         </div>
 
-        <button class="btn-small success" onclick="syncOfflineData()">
-            Sync Offline Data
-        </button>
+        <div class="sync-actions">
+            <button class="btn-small success" onclick="syncOfflineData()">
+                Sync Now
+            </button>
+
+            <button class="btn-small" onclick="window.location.reload()">
+                Refresh View
+            </button>
+        </div>
     </section>
 
-    <section class="registry-panel">
+    <section class="registry-panel rescuer-create-panel">
         <div class="panel-header">
             <div>
+                <p class="eyebrow">RESPONDER SETUP</p>
+                <h2>Create Rescuer Account</h2>
+                <p>
+                    Create a rescuer account for dispatch assignment. The emergency destination will come from the alert details,
+                    not from a fixed rescuer zone.
+                </p>
+            </div>
+        </div>
+
+        <form id="create-rescuer-form" class="form-grid compact-form">
+            <div class="form-group">
+                <label for="rescuer-full-name">Full Name</label>
+                <input
+                    type="text"
+                    id="rescuer-full-name"
+                    placeholder="Example: Juan Dela Cruz"
+                    required>
+            </div>
+
+            <div class="form-group">
+                <label for="rescuer-phone-number">Phone Number</label>
+                <input
+                    type="text"
+                    id="rescuer-phone-number"
+                    placeholder="Example: 09123456789">
+            </div>
+
+            <div class="form-group">
+                <label for="rescuer-address">Address / Base Office</label>
+                <input
+                    type="text"
+                    id="rescuer-address"
+                    placeholder="Example: Barangay Hall / Rescue Office">
+            </div>
+
+            <div class="form-group">
+                <label for="rescuer-password">PIN / Password</label>
+                <input
+                    type="password"
+                    id="rescuer-password"
+                    placeholder="Minimum 6 characters"
+                    required>
+            </div>
+
+            <div class="form-group">
+                <label for="rescuer-organization">Organization / Team</label>
+                <input
+                    type="text"
+                    id="rescuer-organization"
+                    placeholder="Example: Barangay Rescue Team"
+                    value="Barangay Rescue Team"
+                    required>
+            </div>
+
+            <div class="form-group">
+                <label for="rescuer-id">Rescuer ID / Team Code</label>
+                <input
+                    type="text"
+                    id="rescuer-id"
+                    placeholder="Example: BRGY-RES-001"
+                    required>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn-small success">
+                    Create Rescuer
+                </button>
+                <span id="create-rescuer-message" class="sync-message"></span>
+            </div>
+        </form>
+    </section>
+
+    <section class="registry-panel user-registry-panel">
+        <div class="panel-header">
+            <div>
+                <p class="eyebrow">ACCOUNT REGISTRY</p>
                 <h2>Registered Users</h2>
-                <p>{{ users|length }} user account(s) found</p>
+                <p>{{ users|length }} local user account(s) cached</p>
             </div>
 
             <a class="panel-link" href="/approvals">View pending approvals</a>
+        </div>
+
+        <div class="summary-grid">
+            <div class="summary-card">
+                <span>Total Users</span>
+                <strong>{{ user_stats.total }}</strong>
+            </div>
+
+            <div class="summary-card">
+                <span>Approved</span>
+                <strong>{{ user_stats.approved }}</strong>
+            </div>
+
+            <div class="summary-card">
+                <span>Pending</span>
+                <strong>{{ user_stats.pending }}</strong>
+            </div>
+
+            <div class="summary-card">
+                <span>Rejected / Suspended</span>
+                <strong>{{ user_stats.restricted }}</strong>
+            </div>
+        </div>
+
+        <div class="table-controls">
+            <input
+                type="text"
+                id="user-search"
+                placeholder="Search user name, ID, phone, address..."
+                oninput="applyUserFilters()">
+
+            <select id="role-filter" onchange="applyUserFilters()">
+                <option value="all">All Roles</option>
+                <option value="resident">Residents</option>
+                <option value="rescuer">Rescuers</option>
+            </select>
+
+            <select id="status-filter" onchange="applyUserFilters()">
+                <option value="all">All Status</option>
+                <option value="approved">Approved</option>
+                <option value="pending">Pending</option>
+                <option value="rejected">Rejected</option>
+                <option value="suspended">Suspended</option>
+            </select>
         </div>
 
         {% if users %}
@@ -58,6 +184,7 @@
                 <thead>
                     <tr>
                         <th>User ID</th>
+                        <th>Role</th>
                         <th>Full Name</th>
                         <th>Phone Number</th>
                         <th>Address</th>
@@ -69,37 +196,54 @@
 
                 <tbody>
                     {% for user in users %}
-                    <tr>
+                    <tr
+                        class="user-row"
+                        data-role="{{ (user.role or 'resident')|lower }}"
+                        data-status="{{ (user.approval_status or user.status or 'pending')|lower }}"
+                        data-search="{{ (user.user_code or user.user_id or '')|lower }} {{ (user.full_name or '')|lower }} {{ (user.phone_number or '')|lower }} {{ (user.address or '')|lower }}"
+                    >
                         <td>
                             <span class="user-code">
                                 {{ user.user_code or user.user_id or "—" }}
                             </span>
                         </td>
+
+                        <td>
+                            <span class="status-pill {{ (user.role or 'resident')|lower }}">
+                                {{ user.role or "resident" }}
+                            </span>
+                        </td>
+
                         <td>{{ user.full_name or "—" }}</td>
                         <td>{{ user.phone_number or "Not provided" }}</td>
                         <td>{{ user.address or "—" }}</td>
+
                         <td>
                             <span class="status-pill {{ user.approval_status or user.status or 'pending' }}">
                                 {{ user.approval_status or user.status or "pending" }}
                             </span>
                         </td>
+
                         <td>{{ user.created_at or "—" }}</td>
+
                         <td class="actions">
                             <button
                                 class="btn-small"
-                                data-profile-id="{{ user.id }}"
+                                data-profile-id="{{ user.profile_id or '' }}"
                                 data-full-name="{{ user.full_name or '' | e }}"
                                 data-phone-number="{{ user.phone_number or '' | e }}"
                                 data-address="{{ user.address or '' | e }}"
-                                onclick="openEditUserModalFromButton(this)">
+                                onclick="openEditUserModalFromButton(this)"
+                                {% if not user.profile_id %}disabled title="Sync this user from Supabase first"{% endif %}>
                                 Edit
                             </button>
 
                             <button
                                 class="btn-small danger"
-                                data-profile-id="{{ user.id }}"
+                                data-profile-id="{{ user.profile_id or '' }}"
                                 data-user-code="{{ user.user_code or user.user_id or '' | e }}"
-                                onclick="openResetPasswordModalFromButton(this)">
+                                onclick="openResetPasswordModalFromButton(this)"
+                                {% if not user.profile_id %}disabled title="Sync this user from Supabase first"{% endif %}>
                                 Reset PIN
                             </button>
                         </td>
@@ -108,17 +252,24 @@
                 </tbody>
             </table>
         </div>
+
+        <div class="pagination-bar">
+            <button class="btn-small" onclick="changeUserPage(-1)">Previous</button>
+            <span id="pagination-label">Page 1</span>
+            <button class="btn-small" onclick="changeUserPage(1)">Next</button>
+        </div>
         {% else %}
         <div class="empty-state">
             <h3>No registered users yet</h3>
-            <p>Resident registrations from the mobile app will appear here.</p>
+            <p>Resident and rescuer records will appear here after registration or Supabase sync.</p>
         </div>
         {% endif %}
     </section>
 
-        <section class="registry-panel">
+    <section class="registry-panel station-registry-panel">
         <div class="panel-header">
             <div>
+                <p class="eyebrow">STATION REGISTRY</p>
                 <h2>T-Beam Station Registry</h2>
                 <p>{{ stations|length }} local station record(s) configured</p>
             </div>
@@ -217,33 +368,63 @@
 </div>
 
 <script>
-async function syncOfflineData() {
-    const confirmed = confirm(
-        "Sync approved Supabase records into local SQLite for offline dashboard use?"
-    );
+async function syncOfflineData(options = {}) {
+    const silent = options.silent || false;
 
-    if (!confirmed) {
-        return;
+    if (!silent) {
+        const confirmed = confirm(
+            "Sync Supabase records into local SQLite for offline dashboard use?"
+        );
+
+        if (!confirmed) {
+            return;
+        }
     }
 
-    const response = await fetch("/api/admin/sync-offline-data", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"}
-    });
+    try {
+        const response = await fetch("/api/admin/sync-offline-data", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"}
+        });
 
-    const result = await response.json();
+        const result = await response.json();
 
-    if (!response.ok) {
-        alert(result.error || "Offline sync failed.");
-        return;
+        if (!response.ok) {
+            if (!silent) {
+                alert(result.error || "Offline sync failed.");
+            }
+
+            console.warn("Offline sync failed:", result);
+            return;
+        }
+
+        console.log("Offline sync completed:", result);
+
+        if (!silent) {
+            alert(
+                `${result.message}\n\nSynced users: ${result.synced_users}\nSynced stations: ${result.synced_stations}\nLast sync: ${result.last_sync}`
+            );
+
+            window.location.reload();
+        } else {
+            console.log("Silent sync completed. Refreshing local dashboard view...");
+            window.location.reload();
+        }
+
+    } catch (error) {
+        console.warn("Offline sync unavailable:", error);
+
+        if (!silent) {
+            alert("Offline sync unavailable. Check internet/Supabase connection.");
+        }
     }
-
-    alert(
-        `${result.message}\n\nSynced users: ${result.synced_users}\nSynced stations: ${result.synced_stations}\nLast sync: ${result.last_sync}`
-    );
-
-    window.location.reload();
 }
+
+// Auto-sync every 2 minutes while this page is open.
+// This keeps the online dashboard view updated while still reading from local SQLite.
+setInterval(() => {
+    syncOfflineData({ silent: true });
+}, 2 * 60 * 1000);
 
 function openEditUserModalFromButton(button) {
     document.getElementById("editProfileId").value = button.dataset.profileId;
@@ -329,6 +510,127 @@ async function submitResetPassword() {
     alert(result.message || "Password/PIN reset.");
     closeResetPasswordModal();
 }
+
+const createRescuerForm = document.getElementById("create-rescuer-form");
+
+if (createRescuerForm) {
+    createRescuerForm.addEventListener("submit", async function (event) {
+        event.preventDefault();
+
+        const messageEl = document.getElementById("create-rescuer-message");
+
+        const payload = {
+            full_name: document.getElementById("rescuer-full-name").value.trim(),
+            phone_number: document.getElementById("rescuer-phone-number").value.trim(),
+            address: document.getElementById("rescuer-address").value.trim(),
+            password: document.getElementById("rescuer-password").value.trim(),
+            organization: document.getElementById("rescuer-organization").value.trim(),
+            rescuer_id: document.getElementById("rescuer-id").value.trim()
+        };
+
+        messageEl.textContent = "Creating rescuer account...";
+
+        try {
+            const response = await fetch("/api/admin/create-rescuer", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(payload)
+            });
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                messageEl.textContent = result.error || "Failed to create rescuer.";
+                console.error(result);
+                return;
+            }
+
+            messageEl.textContent =
+                `Created ${result.user_code}. Click Sync Now to cache this rescuer locally.`;
+
+            createRescuerForm.reset();
+
+        } catch (error) {
+            console.error(error);
+            messageEl.textContent = "Network/server error while creating rescuer.";
+        }
+    });
+}
+
+let currentUserPage = 1;
+const usersPerPage = 5;
+
+function getFilteredUserRows() {
+    const searchValue = (document.getElementById("user-search")?.value || "").toLowerCase();
+    const roleValue = document.getElementById("role-filter")?.value || "all";
+    const statusValue = document.getElementById("status-filter")?.value || "all";
+
+    const rows = Array.from(document.querySelectorAll(".user-row"));
+
+    return rows.filter(row => {
+        const matchesSearch = row.dataset.search.includes(searchValue);
+        const matchesRole = roleValue === "all" || row.dataset.role === roleValue;
+        const matchesStatus = statusValue === "all" || row.dataset.status === statusValue;
+
+        return matchesSearch && matchesRole && matchesStatus;
+    });
+}
+
+function applyUserFilters() {
+    currentUserPage = 1;
+    renderUserPagination();
+}
+
+function renderUserPagination() {
+    const allRows = Array.from(document.querySelectorAll(".user-row"));
+    const filteredRows = getFilteredUserRows();
+
+    allRows.forEach(row => {
+        row.style.display = "none";
+    });
+
+    const totalPages = Math.max(1, Math.ceil(filteredRows.length / usersPerPage));
+
+    if (currentUserPage > totalPages) {
+        currentUserPage = totalPages;
+    }
+
+    const start = (currentUserPage - 1) * usersPerPage;
+    const end = start + usersPerPage;
+
+    filteredRows.slice(start, end).forEach(row => {
+        row.style.display = "";
+    });
+
+    const label = document.getElementById("pagination-label");
+
+    if (label) {
+        label.textContent = `Page ${currentUserPage} of ${totalPages} • ${filteredRows.length} result(s)`;
+    }
+}
+
+function changeUserPage(direction) {
+    const filteredRows = getFilteredUserRows();
+    const totalPages = Math.max(1, Math.ceil(filteredRows.length / usersPerPage));
+
+    currentUserPage += direction;
+
+    if (currentUserPage < 1) {
+        currentUserPage = 1;
+    }
+
+    if (currentUserPage > totalPages) {
+        currentUserPage = totalPages;
+    }
+
+    renderUserPagination();
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    renderUserPagination();
+});
 </script>
 
 <style>
@@ -362,6 +664,13 @@ async function submitResetPassword() {
     max-width: 760px;
 }
 
+.sync-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
 .registry-page {
     color: #f8fafc;
 }
@@ -393,6 +702,8 @@ async function submitResetPassword() {
 }
 
 .registry-panel {
+    display: block;
+    width: 100%;
     background: rgba(15, 23, 42, 0.88);
     border: 1px solid rgba(148, 163, 184, 0.16);
     border-radius: 22px;
@@ -401,11 +712,15 @@ async function submitResetPassword() {
     box-shadow: 0 18px 50px rgba(0, 0, 0, 0.24);
 }
 
+.rescuer-create-panel {
+    border-color: rgba(56, 189, 248, 0.25);
+}
+
 .panel-header {
     display: flex;
     justify-content: space-between;
     gap: 16px;
-    align-items: center;
+    align-items: flex-start;
     margin-bottom: 18px;
 }
 
@@ -427,7 +742,106 @@ async function submitResetPassword() {
     text-decoration: none;
 }
 
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(240px, 1fr));
+    gap: 14px;
+    margin-top: 16px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.form-group label {
+    font-size: 12px;
+    color: #94a3b8;
+    font-weight: 900;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.form-group input,
+.form-group select {
+    background: rgba(2, 6, 23, 0.74);
+    color: #f8fafc;
+    border: 1px solid rgba(148, 163, 184, 0.20);
+    border-radius: 12px;
+    padding: 11px 12px;
+    outline: none;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+    border-color: rgba(56, 189, 248, 0.65);
+}
+
+.form-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.sync-message {
+    color: #a7f3d0;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(130px, 1fr));
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
+.summary-card {
+    background: rgba(2, 6, 23, 0.52);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 16px;
+    padding: 14px;
+}
+
+.summary-card span {
+    display: block;
+    color: #94a3b8;
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 8px;
+}
+
+.summary-card strong {
+    color: #f8fafc;
+    font-size: 24px;
+    font-weight: 950;
+}
+
+.table-controls {
+    display: grid;
+    grid-template-columns: minmax(260px, 1fr) 180px 180px;
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
+.table-controls input,
+.table-controls select {
+    background: rgba(2, 6, 23, 0.74);
+    color: #f8fafc;
+    border: 1px solid rgba(148, 163, 184, 0.20);
+    border-radius: 12px;
+    padding: 11px 12px;
+    outline: none;
+}
+
 .table-wrapper {
+    display: block;
+    width: 100%;
     overflow-x: auto;
     border-radius: 16px;
     border: 1px solid rgba(148, 163, 184, 0.14);
@@ -436,7 +850,7 @@ async function submitResetPassword() {
 .registry-table {
     width: 100%;
     border-collapse: collapse;
-    min-width: 920px;
+    min-width: 1050px;
 }
 
 .registry-table th {
@@ -495,6 +909,32 @@ async function submitResetPassword() {
     background: rgba(220, 38, 38, 0.14);
     color: #f87171;
     border: 1px solid rgba(220, 38, 38, 0.28);
+}
+
+.status-pill.rescuer {
+    background: rgba(56, 189, 248, 0.14);
+    color: #38bdf8;
+    border: 1px solid rgba(56, 189, 248, 0.28);
+}
+
+.status-pill.resident {
+    background: rgba(168, 85, 247, 0.14);
+    color: #c084fc;
+    border: 1px solid rgba(168, 85, 247, 0.28);
+}
+
+.pagination-bar {
+    display: flex;
+    width: 100%;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 12px;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(148, 163, 184, 0.15);
+    color: #cbd5e1;
+    font-size: 13px;
+    font-weight: 800;
 }
 
 .actions {
@@ -610,6 +1050,24 @@ async function submitResetPassword() {
     justify-content: flex-end;
     gap: 10px;
     margin-top: 18px;
+}
+
+@media (max-width: 900px) {
+    .sync-panel,
+    .panel-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .sync-actions {
+        justify-content: flex-start;
+    }
+
+    .form-grid,
+    .summary-grid,
+    .table-controls {
+        grid-template-columns: 1fr;
+    }
 }
 </style>
 {% endblock %}

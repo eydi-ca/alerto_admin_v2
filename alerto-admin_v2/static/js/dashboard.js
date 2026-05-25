@@ -24,15 +24,21 @@ async function updateStatus(alertId, status) {
 }
 
 async function assignAlert(alertId) {
-    const select = document.getElementById(`team-select-${alertId}`);
+    const select = document.getElementById(`rescuer-select-${alertId}`);
 
-    if (!select || !select.value) {
-        alert("Please select an available rescue team first.");
+    if (!select) {
+        alert("Rescuer selector was not found for this alert.");
         return;
     }
 
-    const teamId = select.value;
-    const confirmed = confirm(`Assign alert ${alertId} to ${teamId}?`);
+    const rescuerCode = select.value;
+
+    if (!rescuerCode) {
+        alert("Please select a rescuer first.");
+        return;
+    }
+
+    const confirmed = confirm(`Assign alert ${alertId} to ${rescuerCode}?`);
 
     if (!confirmed) {
         return;
@@ -44,15 +50,17 @@ async function assignAlert(alertId) {
             "Content-Type": "application/json"
         },
         body: JSON.stringify({
-            team_id: teamId,
-            notes: `Assigned to ${teamId} from dispatcher interface`
+            rescuer_code: rescuerCode,
+            notes: `Assigned to ${rescuerCode} from dispatcher interface`
         })
     });
 
+    const result = await response.json();
+
     if (response.ok) {
+        alert(result.message || "Alert assigned.");
         location.reload();
     } else {
-        const result = await response.json();
         alert(result.error || "Failed to assign alert.");
     }
 }

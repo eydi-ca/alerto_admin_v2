@@ -31,8 +31,16 @@ from database import (
     get_users,
     get_devices,
     get_map_alerts,
+    get_alerts_with_assignments,
+    get_rescuers,
+    assign_alert_to_rescuer,
+    get_rescuer_assignments,
+    update_assignment_status_from_api,
+
+    # Offline sync/local SQLite helpers
     upsert_synced_user,
     get_local_users,
+    get_local_user_by_code,
     upsert_station,
     get_local_stations,
     set_sync_metadata,
@@ -41,6 +49,8 @@ from database import (
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+init_db()
 
 MANILA_TZ = timezone(timedelta(hours=8))
 
@@ -166,10 +176,6 @@ STATIONS = {
     }
 }
 
-@app.before_request
-def setup():
-    init_db()
-
 
 @app.route("/")
 def dashboard():
@@ -185,8 +191,15 @@ def dashboard():
 @app.route("/alerts")
 def alerts_page():
     status = request.args.get("status")
-    alerts = get_alerts(status)
-    return render_template("alerts.html", alerts=alerts, selected_status=status)
+    alerts = get_alerts_with_assignments(status)
+    rescue_teams = get_rescuers()
+
+    return render_template(
+        "alerts.html",
+        alerts=alerts,
+        rescue_teams=rescue_teams,
+        selected_status=status
+    )
 
 
 @app.route("/api/alerts")
@@ -215,7 +228,16 @@ def api_update_alert_status(alert_id):
     new_status = data.get("status")
     notes = data.get("notes")
 
-    allowed_statuses = ["New", "Acknowledged", "In Progress", "Resolved", "Invalid"]
+    allowed_statuses = [
+    "New",
+    "Acknowledged",
+    "Assigned",
+    "Responding",
+    "On Scene",
+    "Resolved",
+    "Cancelled",
+    "Invalid"
+]
 
     if new_status not in allowed_statuses:
         return jsonify({"error": "Invalid status"}), 400
@@ -227,6 +249,82 @@ def api_update_alert_status(alert_id):
 
     return jsonify({"message": "Status updated", "status": new_status})
 
+@app.route("/api/alerts/<alert_id>/assign", methods=["POST"])
+def api_assign_alert(alert_id):
+    data = request.get_json() or {}
+
+    rescuer_code = (
+        data.get("rescuer_code")
+        or data.get("team_id")
+        or data.get("assigned_team_id")
+        or ""
+    ).strip().upper()
+
+    if not rescuer_code:
+        return jsonify({"error": "Rescuer code is required."}), 400
+
+    success, message = assign_alert_to_rescuer(
+        alert_id=alert_id,
+        rescuer_code=rescuer_code,
+        assigned_by="ADMIN",
+    )
+
+    if not success:
+        return jsonify({"error": message}), 400
+
+    return jsonify({
+        "message": message,
+        "alert_id": alert_id,
+        "rescuer_code": rescuer_code,
+        "status": "Assigned"
+    })
+
+@app.route("/api/rescuer/assignments/<int:assignment_id>/status", methods=["POST"])
+def api_update_rescuer_assignment_status(assignment_id):
+    data = request.get_json(silent=True) or {}
+
+    rescuer_code = (data.get("rescuer_code") or "").strip().upper()
+    status = (data.get("status") or "").strip().upper()
+
+    allowed_statuses = {
+        "ASSIGNED",
+        "ACKNOWLEDGED",
+        "ACCEPTED",
+        "RESPONDING",
+        "ON_SCENE",
+        "RESOLVED",
+        "CANCELLED",
+    }
+
+    if not rescuer_code:
+        return jsonify({"error": "rescuer_code is required."}), 400
+
+    if status not in allowed_statuses:
+        return jsonify({
+            "error": "Invalid status.",
+            "allowed_statuses": sorted(list(allowed_statuses))
+        }), 400
+
+    try:
+        result = update_assignment_status_from_api(
+            assignment_id=assignment_id,
+            rescuer_code=rescuer_code,
+            status=status,
+        )
+
+        if not result.get("success"):
+            return jsonify({"error": result.get("message", "Status update failed.")}), 400
+
+        return jsonify({
+            "message": result.get("message"),
+            "assignment_id": result.get("assignment_id", assignment_id),
+            "rescuer_code": result.get("rescuer_code", rescuer_code),
+            "status": result.get("status", status),
+        })
+
+    except Exception as exc:
+        print("RESCUER STATUS API ERROR:", exc)
+        return jsonify({"error": str(exc)}), 500
 
 @app.route("/acknowledgements")
 def acknowledgements_page():
@@ -490,7 +588,6 @@ def api_create_rescuer():
         "password",
         "organization",
         "rescuer_id",
-        "assigned_zone",
     ]
 
     missing = [
@@ -519,8 +616,12 @@ def api_create_rescuer():
             password=password,
             organization=(data.get("organization") or "").strip(),
             rescuer_id=(data.get("rescuer_id") or "").strip(),
-            assigned_zone=(data.get("assigned_zone") or "").strip(),
-            assigned_subzone=(data.get("assigned_subzone") or "").strip(),
+
+            # This is kept only because the current Supabase rescuer_profiles table
+            # has assigned_zone/assigned_subzone columns.
+            # Operational assignment location should come from the alert, not the rescuer account.
+            assigned_zone="Barangay-wide",
+            assigned_subzone="",
         )
 
         return jsonify({

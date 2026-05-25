@@ -327,14 +327,16 @@ def update_resident_profile(
   
 def get_profiles_for_offline_sync():
     """
-    Fetch approved profiles from Supabase so the Raspberry Pi can cache them locally.
-    These records are used by the dashboard and receiver.py during offline operation.
+    Fetch all profiles from Supabase so the Raspberry Pi can cache them locally.
+    This allows the admin dashboard to show users even when offline.
+
+    Approved users are used for emergency identity resolution.
+    Pending/rejected users are still shown for admin visibility.
     """
     result = (
         supabase
         .table("profiles")
         .select("*")
-        .eq("approval_status", "approved")
         .order("created_at", desc=True)
         .execute()
     )

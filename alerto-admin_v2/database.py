@@ -4,8 +4,17 @@ from config import DATABASE_PATH
 
 
 def get_connection():
-    conn = sqlite3.connect(DATABASE_PATH)
+    conn = sqlite3.connect(
+        DATABASE_PATH,
+        timeout=10,
+        check_same_thread=False
+    )
     conn.row_factory = sqlite3.Row
+
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=10000;")
+    conn.execute("PRAGMA foreign_keys=ON;")
+
     return conn
 
 
@@ -66,12 +75,14 @@ def init_db():
     
         # Extra columns for Supabase-to-SQLite offline sync.
     # These ALTER checks make the update safe even if alerto.db already exists.
+    ensure_column(cur, "users", "profile_id", "TEXT")
     ensure_column(cur, "users", "auth_user_id", "TEXT")
     ensure_column(cur, "users", "user_code", "TEXT")
     ensure_column(cur, "users", "role", "TEXT DEFAULT 'resident'")
     ensure_column(cur, "users", "approval_status", "TEXT DEFAULT 'pending'")
     ensure_column(cur, "users", "source", "TEXT DEFAULT 'local'")
     ensure_column(cur, "users", "last_synced_at", "TEXT")
+    ensure_column(cur, "alerts", "updated_at", "TEXT")
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS stations (
@@ -149,6 +160,40 @@ def init_db():
         received_at TEXT
     )
     """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS alert_assignments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        alert_id TEXT,
+        rescuer_code TEXT,
+        assigned_by TEXT,
+        assignment_status TEXT DEFAULT 'Assigned',
+        assigned_at TEXT,
+        updated_at TEXT,
+        notes TEXT,
+        UNIQUE(alert_id, rescuer_code)
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS rescuer_status_updates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        alert_id TEXT,
+        station_id TEXT,
+        rescuer_code TEXT,
+        status TEXT,
+        packet_timestamp TEXT,
+        raw_packet TEXT,
+        rssi REAL,
+        snr REAL,
+        accepted INTEGER DEFAULT 0,
+        reason TEXT,
+        received_at TEXT
+    )
+    """)
+
+    ensure_column(cur, "alert_assignments", "updated_at", "TEXT")
+    ensure_column(cur, "rescuer_status_updates", "created_at", "TEXT")
 
     conn.commit()
     conn.close()
@@ -533,13 +578,16 @@ def get_map_alerts(limit=50):
 
 def upsert_synced_user(profile):
     """
-    Saves an approved Supabase profile into local SQLite.
+    Saves a Supabase profile into local SQLite.
     This allows the Raspberry Pi dashboard to display users even when offline.
+
+    It syncs residents, rescuers, pending users, approved users, and rejected users.
     """
     conn = get_connection()
     cur = conn.cursor()
 
     user_code = profile.get("user_code") or profile.get("user_id")
+    profile_id = profile.get("id")
     auth_user_id = profile.get("auth_user_id")
     full_name = profile.get("full_name")
     phone_number = profile.get("phone_number")
@@ -556,13 +604,14 @@ def upsert_synced_user(profile):
 
     cur.execute("""
         INSERT INTO users (
-            user_id, user_code, auth_user_id, full_name, phone_number,
+            user_id, user_code, profile_id, auth_user_id, full_name, phone_number,
             address, role, approval_status, status, source,
             last_synced_at, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
             user_code = excluded.user_code,
+            profile_id = excluded.profile_id,
             auth_user_id = excluded.auth_user_id,
             full_name = excluded.full_name,
             phone_number = excluded.phone_number,
@@ -576,6 +625,7 @@ def upsert_synced_user(profile):
     """, (
         user_code,
         user_code,
+        profile_id,
         auth_user_id,
         full_name,
         phone_number,
@@ -607,6 +657,7 @@ def get_local_users():
             id,
             user_id,
             user_code,
+            profile_id,
             auth_user_id,
             full_name,
             phone_number,
@@ -740,3 +791,450 @@ def get_sync_metadata(key):
     row = cur.fetchone()
     conn.close()
     return row
+
+def get_rescuers():
+    """
+    Reads synced rescuers from local SQLite.
+    Works if role is synced as 'rescuer', or if rescuer user codes start with R.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT *
+            FROM users
+            WHERE LOWER(COALESCE(role, '')) = 'rescuer'
+               OR user_id LIKE 'R%'
+               OR user_code LIKE 'R%'
+            ORDER BY full_name ASC
+        """)
+    except sqlite3.OperationalError:
+        cur.execute("""
+            SELECT *
+            FROM users
+            WHERE user_id LIKE 'R%'
+            ORDER BY full_name ASC
+        """)
+
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def get_alerts_with_assignments(status=None):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    base_query = """
+        SELECT
+            a.*,
+            aa.rescuer_code AS assigned_rescuer_code,
+            aa.assignment_status AS assignment_status,
+            aa.assigned_at AS assigned_at,
+            u.full_name AS assigned_rescuer_name
+        FROM alerts a
+        LEFT JOIN alert_assignments aa
+            ON a.alert_id = aa.alert_id
+        LEFT JOIN users u
+            ON aa.rescuer_code = u.user_id
+            OR aa.rescuer_code = u.user_code
+    """
+
+    if status:
+        cur.execute(base_query + """
+            WHERE a.alert_status = ?
+            ORDER BY a.received_at DESC
+        """, (status,))
+    else:
+        cur.execute(base_query + """
+            ORDER BY a.received_at DESC
+        """)
+
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def assign_alert_to_rescuer(alert_id, rescuer_code, assigned_by="ADMIN", notes=None):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT * FROM alerts WHERE alert_id = ?", (alert_id,))
+    alert = cur.fetchone()
+
+    if not alert:
+        conn.close()
+        return False, "Alert not found."
+
+    cur.execute("""
+        SELECT *
+        FROM users
+        WHERE user_id = ? OR user_code = ?
+        LIMIT 1
+    """, (rescuer_code, rescuer_code))
+
+    rescuer = cur.fetchone()
+
+    if not rescuer:
+        conn.close()
+        return False, "Rescuer not found in local synced users."
+
+    timestamp = now()
+
+    cur.execute("""
+        INSERT INTO alert_assignments (
+            alert_id, rescuer_code, assigned_by,
+            assignment_status, assigned_at, updated_at, notes
+        )
+        VALUES (?, ?, ?, 'Assigned', ?, ?, ?)
+        ON CONFLICT(alert_id, rescuer_code) DO UPDATE SET
+            assignment_status = 'Assigned',
+            assigned_by = excluded.assigned_by,
+            updated_at = excluded.updated_at,
+            notes = excluded.notes
+    """, (
+        alert_id,
+        rescuer_code,
+        assigned_by,
+        timestamp,
+        timestamp,
+        notes,
+    ))
+
+    cur.execute("""
+        UPDATE alerts
+        SET alert_status = 'Assigned'
+        WHERE alert_id = ?
+    """, (alert_id,))
+
+    cur.execute("""
+        INSERT INTO status_logs (
+            alert_id, old_status, new_status, changed_at, notes
+        )
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        alert_id,
+        alert["alert_status"],
+        "Assigned",
+        timestamp,
+        f"Assigned to rescuer {rescuer_code}"
+    ))
+
+    conn.commit()
+    conn.close()
+    return True, "Alert assigned successfully."
+
+
+def process_rescuer_status_update(
+    alert_id,
+    station_id,
+    rescuer_code,
+    status,
+    packet_timestamp=None,
+    raw_packet=None,
+    rssi=None,
+    snr=None
+):
+    """
+    Called by receiver.py when it receives an S packet:
+    S|alert_code|station_id|rescuer_code|status|timestamp
+    """
+    allowed_statuses = {
+        "ACCEPTED": "Responding",
+        "RESPONDING": "Responding",
+        "ON_SCENE": "On Scene",
+        "RESOLVED": "Resolved",
+        "CANCELLED": "Cancelled",
+    }
+
+    normalized_status = (status or "").strip().upper()
+    received_at = now()
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    if normalized_status not in allowed_statuses:
+        cur.execute("""
+            INSERT INTO rescuer_status_updates (
+                alert_id, station_id, rescuer_code, status,
+                packet_timestamp, raw_packet, rssi, snr,
+                accepted, reason, received_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+        """, (
+            alert_id,
+            station_id,
+            rescuer_code,
+            status,
+            packet_timestamp,
+            raw_packet,
+            rssi,
+            snr,
+            "Invalid status value",
+            received_at,
+        ))
+
+        conn.commit()
+        conn.close()
+        return False, "Invalid status value."
+
+    cur.execute("SELECT * FROM alerts WHERE alert_id = ?", (alert_id,))
+    alert = cur.fetchone()
+
+    if not alert:
+        cur.execute("""
+            INSERT INTO rescuer_status_updates (
+                alert_id, station_id, rescuer_code, status,
+                packet_timestamp, raw_packet, rssi, snr,
+                accepted, reason, received_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+        """, (
+            alert_id,
+            station_id,
+            rescuer_code,
+            normalized_status,
+            packet_timestamp,
+            raw_packet,
+            rssi,
+            snr,
+            "Alert not found",
+            received_at,
+        ))
+
+        conn.commit()
+        conn.close()
+        return False, "Alert not found."
+
+    cur.execute("""
+        SELECT *
+        FROM alert_assignments
+        WHERE alert_id = ?
+          AND rescuer_code = ?
+        LIMIT 1
+    """, (alert_id, rescuer_code))
+
+    assignment = cur.fetchone()
+
+    if not assignment:
+        cur.execute("""
+            INSERT INTO rescuer_status_updates (
+                alert_id, station_id, rescuer_code, status,
+                packet_timestamp, raw_packet, rssi, snr,
+                accepted, reason, received_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+        """, (
+            alert_id,
+            station_id,
+            rescuer_code,
+            normalized_status,
+            packet_timestamp,
+            raw_packet,
+            rssi,
+            snr,
+            "Rescuer is not assigned to this alert",
+            received_at,
+        ))
+
+        conn.commit()
+        conn.close()
+        return False, "Rescuer is not assigned to this alert."
+
+    dashboard_status = allowed_statuses[normalized_status]
+
+    timestamp = now()
+
+    cur.execute("""
+        UPDATE alert_assignments
+        SET assignment_status = ?,
+            updated_at = ?
+        WHERE id = ?
+    """, (
+        status,
+        timestamp,
+        assignment_id,
+    ))
+
+    cur.execute("""
+        UPDATE alerts
+        SET alert_status = ?
+        WHERE alert_id = ?
+    """, (
+        dashboard_status,
+        alert_id,
+    ))
+
+    cur.execute("""
+        INSERT INTO status_logs (
+            alert_id, old_status, new_status, changed_at, notes
+        )
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        alert_id,
+        alert["alert_status"],
+        dashboard_status,
+        received_at,
+        f"Rescuer {rescuer_code} updated status via station {station_id}"
+    ))
+
+    cur.execute("""
+        INSERT INTO rescuer_status_updates (
+            alert_id, station_id, rescuer_code, status,
+            packet_timestamp, raw_packet, rssi, snr,
+            accepted, reason, received_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+    """, (
+        alert_id,
+        station_id,
+        rescuer_code,
+        normalized_status,
+        packet_timestamp,
+        raw_packet,
+        rssi,
+        snr,
+        "Status update accepted",
+        received_at,
+    ))
+
+    conn.commit()
+    conn.close()
+
+    return True, f"Status updated to {dashboard_status}."
+
+
+def get_rescuer_assignments(rescuer_code):
+    """
+    For future rescuer app local API.
+    The rescuer app can fetch assigned emergencies from the Raspberry Pi hub.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            aa.id AS assignment_id,
+            aa.alert_id,
+            aa.rescuer_code,
+            aa.assignment_status,
+            aa.assigned_at,
+            aa.updated_at,
+            a.device_id,
+            a.user_id,
+            a.zone,
+            a.subzone,
+            a.emergency_type,
+            a.emergency_label,
+            a.message,
+            a.received_at,
+            a.alert_status,
+            u.full_name AS resident_name,
+            u.phone_number AS resident_phone,
+            u.address AS resident_address
+        FROM alert_assignments aa
+        JOIN alerts a
+            ON aa.alert_id = a.alert_id
+        LEFT JOIN users u
+            ON a.user_id = u.user_id
+            OR a.user_id = u.user_code
+        WHERE aa.rescuer_code = ?
+        ORDER BY aa.updated_at DESC
+    """, (rescuer_code,))
+
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+def update_assignment_status_from_api(assignment_id, rescuer_code, status):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    assignment = cur.execute("""
+        SELECT 
+            aa.id,
+            aa.alert_id,
+            aa.rescuer_code
+        FROM alert_assignments aa
+        WHERE aa.id = ?
+    """, (assignment_id,)).fetchone()
+
+    if not assignment:
+        conn.close()
+        return {
+            "success": False,
+            "message": "Assignment not found."
+        }
+
+    if str(assignment["rescuer_code"]).upper() != str(rescuer_code).upper():
+        conn.close()
+        return {
+            "success": False,
+            "message": "This assignment does not belong to this rescuer."
+        }
+
+    normalized_status = str(status).strip().upper()
+
+    allowed_statuses = [
+        "ASSIGNED",
+        "ACKNOWLEDGED",
+        "RESPONDING",
+        "ON_SCENE",
+        "RESOLVED",
+        "CANCELLED"
+    ]
+
+    if normalized_status not in allowed_statuses:
+        conn.close()
+        return {
+            "success": False,
+            "message": "Invalid status."
+        }
+
+    alert_id = assignment["alert_id"]
+    timestamp = now()
+
+    status_map = {
+        "ASSIGNED": "Assigned",
+        "ACKNOWLEDGED": "Acknowledged",
+        "RESPONDING": "Responding",
+        "ON_SCENE": "On Scene",
+        "RESOLVED": "Resolved",
+        "CANCELLED": "Cancelled"
+    }
+
+    new_alert_status = status_map.get(normalized_status, normalized_status)
+
+    cur.execute("""
+        UPDATE alert_assignments
+        SET assignment_status = ?,
+            updated_at = ?
+        WHERE id = ?
+    """, (
+        normalized_status,
+        timestamp,
+        assignment_id
+    ))
+
+    cur.execute("""
+        UPDATE alerts
+        SET alert_status = ?,
+            updated_at = ?
+        WHERE alert_id = ?
+    """, (
+        new_alert_status,
+        timestamp,
+        alert_id
+    ))
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "success": True,
+        "message": f"Assignment updated to {normalized_status}.",
+        "assignment_id": assignment_id,
+        "rescuer_code": rescuer_code,
+        "status": normalized_status
+    }
